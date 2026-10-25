@@ -20,6 +20,7 @@ PRESETS = (
     Preset("openrouter", "OpenRouter", "https://openrouter.ai/api/v1"),
     Preset("groq", "Groq", "https://api.groq.com/openai/v1"),
     Preset("mistral", "Mistral", "https://api.mistral.ai/v1"),
+    Preset("ollama", "Ollama Cloud", "https://ollama.com/v1"),
     Preset("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
     Preset(
         "anthropic",

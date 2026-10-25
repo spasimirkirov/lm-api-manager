@@ -1,7 +1,7 @@
 # LM OpenAI Provider
 
 A small local gateway for Pal Engine that lets you chat through **your own** AI provider accounts
-(OpenAI, DeepSeek, OpenRouter, Groq, Mistral, Google Gemini, Anthropic, or any other
+(OpenAI, DeepSeek, OpenRouter, Groq, Mistral, Ollama Cloud, Google Gemini, Anthropic, or any other
 OpenAI-compatible endpoint). You keep your API keys in this add-on and Pal Engine never sees
 them. Pal Engine sends its chat requests to this add-on, which adds your key and forwards them
 to the provider you chose.
@@ -38,11 +38,15 @@ The settings window offers these presets (they fill the base URL) and **Custom**
 | OpenRouter | `https://openrouter.ai/api/v1` |
 | Groq | `https://api.groq.com/openai/v1` |
 | Mistral | `https://api.mistral.ai/v1` |
+| Ollama Cloud | `https://ollama.com/v1` |
 | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | Anthropic | `https://api.anthropic.com/v1` |
 
 Models appear in Pal Engine as `<provider id>/<model>`, e.g. `deepseek/deepseek-chat` or
-`openrouter/openai/gpt-4o`. An optional allow-list per provider limits which models are listed.
+`openrouter/openai/gpt-4o`. In the settings, **Test connection** loads the provider's models; tick
+the ones Pal Engine may use (none ticked means all). A model is marked **(free)** only when the
+provider itself reports it, with a `:free` id or a zero price in its model list (OpenRouter does);
+providers whose list carries no prices (for example Ollama Cloud) show no mark.
 
 The provider list (no keys) is saved in `%APPDATA%\PalEngine\lm-open-ai-provider\providers.json`.
 
@@ -75,7 +79,7 @@ On start the server prints one line to stdout:
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | `{"status": "ok", "version": "...", "providers": 2}` |
-| `GET /v1/models` | Models of every provider, ids prefixed with the provider id; `errors` lists providers whose list failed |
+| `GET /v1/models` | Models of every provider, ids prefixed with the provider id, `free` when the provider reports a zero price; `errors` lists providers whose list failed |
 | `POST /v1/chat/completions` | Routed by the model prefix; streaming (SSE) is passed through chunk by chunk |
 
 Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`, for example

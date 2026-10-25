@@ -39,7 +39,10 @@ class Upstream:
         self.requests.append(("models", dict(request.headers), None))
         if self.status != 200:
             return web.json_response(self.error_body or {}, status=self.status)
-        return web.json_response({"object": "list", "data": [{"id": "model-a"}, {"id": "vendor/model-b"}]})
+        return web.json_response({"object": "list", "data": [
+            {"id": "model-a", "pricing": {"prompt": "0", "completion": "0"}},
+            {"id": "vendor/model-b", "pricing": {"prompt": "0.000001", "completion": "0"}},
+        ]})
 
     async def chat(self, request):
         body = await request.json()
@@ -135,6 +138,8 @@ def test_models_are_prefixed_per_provider(tmp_path):
             ids = sorted(m["id"] for m in data["data"])
             assert ids == ["mock/model-a", "mock/vendor/model-b", "other/model-a", "other/vendor/model-b"]
             assert data["errors"] == []
+            free = {m["id"]: m["free"] for m in data["data"]}
+            assert free["mock/model-a"] is True and free["mock/vendor/model-b"] is False
             sent_keys = sorted(headers["Authorization"] for _, headers, _ in upstream.requests)
             assert sent_keys == sorted([f"Bearer {SECRET}", f"Bearer {OTHER_SECRET}"])
         finally:

@@ -26,7 +26,8 @@ from .upstream import (
     UpstreamError,
     auth_headers,
     connection_error,
-    list_models,
+    provider_models,
+    read_limited,
     map_status,
     new_session,
     upstream_url,
@@ -89,20 +90,21 @@ async def models(request: web.Request):
         if cached and cached[0] == signature and time.monotonic() - cached[1] < MODELS_CACHE_S:
             return provider, cached[2], None
         try:
-            ids = await list_models(session, provider, store.key(provider.id))
+            entries = await provider_models(session, provider, store.key(provider.id))
         except UpstreamError as error:
             return provider, [], error
-        cache[provider.id] = (signature, time.monotonic(), ids)
-        return provider, ids, None
+        cache[provider.id] = (signature, time.monotonic(), entries)
+        return provider, entries, None
 
     results = await asyncio.gather(*(one(p) for p in providers))
     data, errors = [], []
-    for provider, ids, error in results:
+    for provider, entries, error in results:
         if error:
             log.warning("Model list of %s failed: %s", provider.id, error.code)
             errors.append({"provider": provider.id, "message": error.message, "code": error.code})
-        data.extend({"id": f"{provider.id}/{model_id}", "object": "model", "owned_by": provider.id,
-                     "provider_name": provider.name} for model_id in ids)
+        # "free" (an extension) is set only when the provider itself reports a zero price.
+        data.extend({"id": f"{provider.id}/{entry['id']}", "object": "model", "owned_by": provider.id,
+                     "provider_name": provider.name, "free": entry["free"]} for entry in entries)
     # "errors" is an extension: Pal Engine shows which provider failed instead of an empty list.
     return web.json_response({"object": "list", "data": data, "errors": errors})
 
@@ -142,7 +144,7 @@ async def chat_completions(request: web.Request):
         async with session.post(upstream_url(provider, "chat/completions"), data=json.dumps(body),
                                 headers=headers, timeout=timeout) as upstream:
             if upstream.status != 200:
-                raw = await upstream.content.read(MAX_ERROR_BODY)
+                raw = await read_limited(upstream, MAX_ERROR_BODY)
                 error = map_status(provider, upstream.status, raw, store.all_keys())
                 log.warning("Chat via %s failed: HTTP %s (%s)", provider.id, upstream.status, error.code)
                 return upstream_error_response(error)

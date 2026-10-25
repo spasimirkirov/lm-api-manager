@@ -11,6 +11,7 @@ TOTAL_TIMEOUT_S = 300
 # Streaming: the whole answer may take long, but a silent socket is a dead one.
 STREAM_READ_TIMEOUT_S = 120
 MAX_ERROR_BODY = 64 * 1024
+MAX_MODELS_BODY = 16 * 1024 * 1024
 
 # Strings that look like API keys of the common providers, scrubbed from anything we pass on.
 KEY_LIKE = re.compile(r"\b(?:sk|gsk|xai|sk-ant|sk-or)-[A-Za-z0-9_\-*.]{8,}|\bAIza[0-9A-Za-z_\-]{20,}")
@@ -28,6 +29,17 @@ class UpstreamError(Exception):
 
     def body(self) -> dict:
         return {"error": {"message": self.message, "type": self.err_type, "code": self.code}}
+
+
+async def read_limited(response, limit: int) -> bytes:
+    """The whole body up to `limit` bytes (StreamReader.read(n) returns only what has arrived)."""
+    chunks, size = [], 0
+    async for chunk in response.content.iter_any():
+        chunks.append(chunk)
+        size += len(chunk)
+        if size >= limit:
+            break
+    return b"".join(chunks)[:limit]
 
 
 def redact(text: str, keys=()) -> str:
@@ -101,11 +113,24 @@ def new_session() -> aiohttp.ClientSession:
     )
 
 
-async def list_models(session: aiohttp.ClientSession, provider, key: str, use_allow_list: bool = True) -> list:
-    """Model ids of one provider (without the prefix). "Test connection" asks the provider
-    even when an allow-list is set."""
-    if provider.models and use_allow_list:
-        return list(provider.models)
+def is_free(entry) -> bool:
+    """True only when the provider itself says so: a ":free" model id, or a price of zero
+    for both input and output (OpenRouter's "pricing" field). Nothing is guessed."""
+    if not isinstance(entry, dict):
+        return False
+    if str(entry.get("id", "")).endswith(":free"):
+        return True
+    pricing = entry.get("pricing")
+    if not isinstance(pricing, dict) or "prompt" not in pricing or "completion" not in pricing:
+        return False
+    try:
+        return float(pricing["prompt"]) == 0 and float(pricing["completion"]) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+async def list_models(session: aiohttp.ClientSession, provider, key: str) -> list:
+    """Models the provider offers (ids without the prefix): [{"id", "free"}], sorted."""
     if not key:
         raise UpstreamError(401, f"{provider.name} has no API key yet.", "missing_api_key", "authentication_error")
     try:
@@ -114,7 +139,7 @@ async def list_models(session: aiohttp.ClientSession, provider, key: str, use_al
             headers=auth_headers(provider, key),
             timeout=aiohttp.ClientTimeout(total=30, connect=CONNECT_TIMEOUT_S),
         ) as response:
-            raw = await response.content.read(4 * 1024 * 1024)
+            raw = await read_limited(response, MAX_MODELS_BODY)
             if response.status != 200:
                 raise map_status(provider, response.status, raw[:MAX_ERROR_BODY], [key])
     except UpstreamError:
@@ -126,10 +151,24 @@ async def list_models(session: aiohttp.ClientSession, provider, key: str, use_al
     except ValueError:
         raise UpstreamError(502, f"{provider.name} sent a model list that is not JSON.", "upstream_bad_response") from None
     entries = data.get("data") if isinstance(data, dict) else data
-    ids = []
+    models = {}
     for entry in entries if isinstance(entries, list) else []:
         model_id = entry.get("id") if isinstance(entry, dict) else entry
         if isinstance(model_id, str) and model_id:
             # Gemini lists "models/gemini-2.5-flash"; the chat endpoint takes either form.
-            ids.append(model_id)
-    return sorted(set(ids))
+            models[model_id] = models.get(model_id, False) or is_free(entry)
+    return [{"id": model_id, "free": models[model_id]} for model_id in sorted(models)]
+
+
+async def provider_models(session: aiohttp.ClientSession, provider, key: str) -> list:
+    """The models Pal Engine may use: the provider's list, cut to the allow-list when one is
+    set. If the provider cannot be asked, the allow-list alone still works."""
+    if not provider.models:
+        return await list_models(session, provider, key)
+    allowed = set(provider.models)
+    try:
+        offered = {m["id"]: m for m in await list_models(session, provider, key)}
+    except UpstreamError:
+        offered = {}
+    return [offered.get(model_id) or {"id": model_id, "free": model_id.endswith(":free")}
+            for model_id in sorted(allowed)]

@@ -14,7 +14,7 @@ from lm_provider.config import (
     save_providers,
     unique_id,
 )
-from lm_provider.upstream import auth_headers, redact
+from lm_provider.upstream import auth_headers, is_free, redact
 
 SECRET = "sk-test-ABCDEFGHIJKLMNOPQRSTUVWX1234"
 
@@ -89,3 +89,13 @@ def test_redact():
     assert SECRET not in redact(f"bad key {SECRET}", [SECRET])
     assert "sk-proj-abcdefghijk" not in redact("Incorrect API key provided: sk-proj-abcdefghijk*****1234")
     assert "AIzaSyA1234567890abcdefghijk" not in redact("key AIzaSyA1234567890abcdefghijk")
+
+
+def test_free_only_when_the_provider_says_so():
+    assert is_free({"id": "meta/llama:free"})
+    assert is_free({"id": "x", "pricing": {"prompt": "0", "completion": "0"}})
+    assert not is_free({"id": "x", "pricing": {"prompt": "0", "completion": "0.000002"}})
+    assert not is_free({"id": "x", "pricing": {"prompt": "0"}})
+    assert not is_free({"id": "x", "pricing": {"prompt": "-", "completion": "0"}})
+    assert not is_free({"id": "gemma4:31b"})
+    assert not is_free("plain-id")
