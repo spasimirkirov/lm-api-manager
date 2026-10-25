@@ -1,0 +1,53 @@
+name: Release
+
+# Only a pushed tag builds a release: push a tag like v0.2.0 that matches "version" in
+# manifest.json and this workflow tests, builds the exe, smoke-tests it and publishes release
+# v<version> with the ready-to-import plugin zip (Pal Engine's integration updater reads the
+# latest release). Pushes to main without a tag build nothing.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the manifest
+        shell: pwsh
+        run: |
+          $version = (Get-Content manifest.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match manifest.json version $version"
+          }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Tests
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q
+
+      - name: Build plugin zip
+        shell: pwsh
+        run: ./build_exe.ps1 -Clean -Python python
+
+      - name: Smoke test
+        shell: pwsh
+        run: ./scripts/smoke_test.ps1
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: dist/*.zip
+          generate_release_notes: true

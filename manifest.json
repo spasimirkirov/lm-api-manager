@@ -1,0 +1,23 @@
+{
+  "manifest_version": 2,
+  "plugin_name": "LM OpenAI Provider",
+  "plugin_type": "llm_plugin",
+  "version": "0.1.0",
+  "executable": "LmOpenAiProvider.exe",
+  "transport": {
+    "kind": "http",
+    "protocol": "openai"
+  },
+  "capabilities": {
+    "persistent_worker": true,
+    "services": ["chat"]
+  },
+  "commands": {
+    "serve": "--serve --parent-pid {parent_pid}",
+    "open_settings": "--settings"
+  },
+  "author": "spasimirkirov",
+  "update": {
+    "github": "spasimirkirov/lm-open-ai-provider"
+  }
+}

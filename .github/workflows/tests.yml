@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Tests
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q
