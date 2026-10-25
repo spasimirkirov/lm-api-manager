@@ -416,9 +416,63 @@ class SettingsWindow:
         run_in_thread(self.root, lambda: fetch_models(provider, key), done)
 
 
+# Windows virtual key codes of the edit shortcuts. Tk matches Ctrl+V by the letter, so with a
+# Cyrillic (or Greek, ...) keyboard layout the key reads as another letter and nothing pastes;
+# the key code is the same on every layout.
+EDIT_KEYCODES = {86: "<<Paste>>", 67: "<<Copy>>", 88: "<<Cut>>", 65: "select_all"}
+LATIN_EDIT_KEYS = {"v", "c", "x", "a"}
+
+
+def select_all(widget) -> None:
+    try:
+        widget.select_range(0, "end")
+        widget.icursor("end")
+    except tk.TclError:
+        pass
+
+
+def on_control_key(event):
+    """Ctrl+key in an entry field: paste/copy/cut/select all by key code when the layout's letter
+    isn't the Latin one Tk expects."""
+    if not isinstance(event.widget, (tk.Entry, ttk.Entry)):
+        return None
+    if str(event.keysym).lower() in LATIN_EDIT_KEYS:
+        return None  # Tk's own bindings already handle a Latin layout
+    action = EDIT_KEYCODES.get(event.keycode)
+    if not action:
+        return None
+    if action == "select_all":
+        select_all(event.widget)
+    else:
+        event.widget.event_generate(action)
+    return "break"
+
+
+def install_edit_shortcuts(root: tk.Tk) -> None:
+    """Ctrl+V/C/X/A on any keyboard layout, and a right-click menu, for every entry field."""
+    menu = tk.Menu(root, tearoff=0, bg=PANEL, fg=FG, activebackground="#1f2937", activeforeground=ACCENT)
+
+    def on_right_click(event):
+        widget = event.widget
+        if not isinstance(widget, (tk.Entry, ttk.Entry)):
+            return
+        widget.focus_set()
+        menu.delete(0, "end")
+        menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
+        menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
+        menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
+        menu.add_separator()
+        menu.add_command(label="Select all", command=lambda: select_all(widget))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    root.bind_all("<Control-KeyPress>", on_control_key, add="+")
+    root.bind_all("<Button-3>", on_right_click, add="+")
+
+
 def run_settings() -> int:
     root = tk.Tk()
     apply_theme(root)
+    install_edit_shortcuts(root)
     SettingsWindow(root, KeyVault())
     root.mainloop()
     return 0

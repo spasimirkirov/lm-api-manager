@@ -74,14 +74,23 @@ def run_server(parent_pid: int) -> int:
     code = 0
     try:
         asyncio.run(main())
-    except OSError as error:
-        print(f"error: {error}", file=sys.stderr)
+    except Exception as error:  # the exe has no console: anything uncaught would pop up a dialog
+        log.error("Server stopped: %s", type(error).__name__)
         code = 1
     # The stdin watcher may still be blocked in a read: leave without the interpreter shutdown
-    # that would wait on it. The server is already closed at this point.
-    sys.stdout.flush()
-    sys.stderr.flush()
+    # that would wait on it. The server is already closed at this point. Pal Engine may already
+    # have closed our pipes (it quit first), so flushing can fail: that is fine.
+    quiet_flush()
     os._exit(code)
+
+
+def quiet_flush() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except (OSError, ValueError):
+            pass
 
 
 def main() -> int:
