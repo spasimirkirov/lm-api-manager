@@ -7,7 +7,7 @@ four characters of a saved key and never prints one.
 import asyncio
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from . import __version__
 from .config import (
@@ -81,20 +81,18 @@ def describe_error(error) -> str:
     return f"Test failed: {type(error).__name__}"
 
 
-class ProviderDialog(tk.Toplevel):
-    """Add or edit one provider. `on_save(provider, new_key_or_None)`."""
+class ProviderForm(ttk.Frame):
+    """Add or edit one provider, shown in place of the list in the same window.
+    `on_save(provider, new_key_or_None)` stores it; `on_close()` goes back to the list."""
 
-    def __init__(self, master, vault, existing: Provider, taken_ids, on_save):
-        super().__init__(master)
+    def __init__(self, master, vault, existing: Provider, taken_ids, on_save, on_close):
+        super().__init__(master, padding=18)
         self.vault = vault
         self.existing = existing
         self.taken_ids = taken_ids
         self.on_save = on_save
+        self.on_close = on_close
         self.saved_key = vault.get(existing.id) if existing else ""
-        self.title("Edit provider" if existing else "Add provider")
-        self.configure(bg=BG, padx=18, pady=16)
-        self.resizable(False, False)
-        self.transient(master)
 
         self.preset_labels = [p.name for p in PRESETS] + [CUSTOM_LABEL]
         preset = preset_for(existing.preset) if existing else PRESETS[0]
@@ -106,45 +104,48 @@ class ProviderDialog(tk.Toplevel):
         self.type_var = tk.StringVar(value=TYPE_LABELS["llm"])
         self.status_var = tk.StringVar()
 
-        row = 0
+        ttk.Label(self, text="Edit provider" if existing else "Add provider", style="Title.TLabel").grid(
+            row=0, column=0, sticky="w")
+        ttk.Separator(self).grid(row=1, column=0, sticky="ew", pady=(8, 10))
+        row = 2
 
         def field(label, widget, hint=""):
             nonlocal row
             ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", pady=(0, 2))
             widget.grid(row=row + 1, column=0, sticky="ew", pady=(0, 2))
             if hint:
-                ttk.Label(self, text=hint, style="Muted.TLabel", wraplength=420).grid(row=row + 2, column=0, sticky="w")
+                ttk.Label(self, text=hint, style="Muted.TLabel", wraplength=680).grid(row=row + 2, column=0, sticky="w")
             row += 3
             ttk.Frame(self, height=8).grid(row=row, column=0)
             row += 1
 
         preset_box = ttk.Combobox(self, textvariable=self.preset_var, values=self.preset_labels,
-                                  state="readonly", width=52)
+                                  state="readonly")
         preset_box.bind("<<ComboboxSelected>>", self.on_preset)
         field("Provider", preset_box, "Fills the base URL. Pick Custom for any other OpenAI-compatible endpoint.")
-        field("Name", ttk.Entry(self, textvariable=self.name_var, width=54))
-        self.url_entry = ttk.Entry(self, textvariable=self.url_var, width=54)
+        field("Name", ttk.Entry(self, textvariable=self.name_var))
+        self.url_entry = ttk.Entry(self, textvariable=self.url_var)
         field("Base URL", self.url_entry, "The address that ends before /chat/completions, e.g. https://api.openai.com/v1")
         key_hint_text = (f"Saved key {key_hint(self.saved_key)}. Leave empty to keep it."
                          if self.saved_key else "Stored in Windows Credential Manager, never in a file.")
-        field("API key", ttk.Entry(self, textvariable=self.key_var, show="•", width=54), key_hint_text)
+        field("API key", ttk.Entry(self, textvariable=self.key_var, show="•"), key_hint_text)
         field("Type", ttk.Combobox(self, textvariable=self.type_var, values=list(TYPE_LABELS.values()),
-                                   state="readonly", width=52))
-        field("Models (optional)", ttk.Entry(self, textvariable=self.models_var, width=54),
+                                   state="readonly"))
+        field("Models (optional)", ttk.Entry(self, textvariable=self.models_var),
               "Comma-separated allow-list. Empty lists every model the provider offers.")
 
-        ttk.Label(self, textvariable=self.status_var, style="Muted.TLabel", wraplength=420).grid(
-            row=row, column=0, sticky="w", pady=(0, 8))
+        ttk.Separator(self).grid(row=row, column=0, sticky="ew", pady=(0, 10))
         row += 1
         buttons = ttk.Frame(self)
         buttons.grid(row=row, column=0, sticky="w")
         self.test_button = ttk.Button(buttons, text="Test connection", command=self.test)
         self.test_button.pack(side="left")
         ttk.Button(buttons, text="Save", style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text="Cancel", command=self.on_close).pack(side="left", padx=(8, 0))
+        ttk.Label(self, textvariable=self.status_var, style="Muted.TLabel", wraplength=680).grid(
+            row=row + 1, column=0, sticky="w", pady=(8, 0))
         self.columnconfigure(0, weight=1)
         self.on_preset(initial=True)
-        self.grab_set()
 
     def preset_id(self) -> str:
         label = self.preset_var.get()
@@ -217,7 +218,7 @@ class ProviderDialog(tk.Toplevel):
             self.status_var.set(f"Could not save: {type(error).__name__}")
             return
         self.key_var.set("")
-        self.destroy()
+        self.on_close()
 
 
 class SettingsWindow:
@@ -226,9 +227,12 @@ class SettingsWindow:
         self.vault = vault
         self.providers = load_providers()
         root.title(f"LM OpenAI Provider {__version__}")
-        root.geometry("760x420")
-        root.minsize(620, 320)
-        frame = ttk.Frame(root, padding=18)
+        root.geometry("780x640")
+        root.minsize(640, 560)
+        self.form = None
+        self.pending_remove = None
+        # One window: the list, or the add/edit form in its place.
+        frame = self.list_frame = ttk.Frame(root, padding=18)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Providers", style="Title.TLabel").pack(anchor="w")
         ttk.Label(frame, style="Muted.TLabel", wraplength=700,
@@ -257,6 +261,7 @@ class SettingsWindow:
         self.tree.pack(fill="both", expand=True, pady=(4, 4))
         self.tree.bind("<Double-1>", lambda _e: self.edit())
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self.update_buttons())
+        self.root.bind("<Escape>", lambda _e: self.close_form())
         self.refresh()
 
     def selected(self):
@@ -264,7 +269,11 @@ class SettingsWindow:
         return next((p for p in self.providers if p.id in selection), None)
 
     def update_buttons(self):
-        state = ["!disabled"] if self.selected() else ["disabled"]
+        selected = self.selected()
+        if not selected or selected.id != self.pending_remove:
+            self.pending_remove = None
+            self.remove_button.configure(text="Remove")
+        state = ["!disabled"] if selected else ["disabled"]
         for button in (self.edit_button, self.test_button, self.remove_button):
             button.state(state)
 
@@ -289,21 +298,39 @@ class SettingsWindow:
         self.refresh(select_id=provider.id)
         self.status_var.set(f"Saved {provider.name}.")
 
+    def open_form(self, existing):
+        self.close_form()
+        self.list_frame.pack_forget()
+        self.form = ProviderForm(self.root, self.vault, existing, {p.id for p in self.providers},
+                                 self.store, self.close_form)
+        self.form.pack(fill="both", expand=True)
+
+    def close_form(self):
+        if self.form is None:
+            return
+        self.form.destroy()
+        self.form = None
+        self.list_frame.pack(fill="both", expand=True)
+
     def add(self):
-        ProviderDialog(self.root, self.vault, None, {p.id for p in self.providers}, self.store)
+        self.open_form(None)
 
     def edit(self):
         provider = self.selected()
         if provider:
-            ProviderDialog(self.root, self.vault, provider, {p.id for p in self.providers}, self.store)
+            self.open_form(provider)
 
     def remove(self):
         provider = self.selected()
         if not provider:
             return
-        if not messagebox.askyesno("Remove provider",
-                                   f"Remove {provider.name} and delete its saved API key?", parent=self.root):
+        # Confirmed in place: the first click asks, a second click on the same row removes.
+        if self.pending_remove != provider.id:
+            self.pending_remove = provider.id
+            self.remove_button.configure(text="Confirm remove")
+            self.status_var.set(f"Click Confirm remove to delete {provider.name} and its saved API key.")
             return
+        self.pending_remove = None
         self.providers = [p for p in self.providers if p.id != provider.id]
         save_providers(self.providers)
         self.vault.delete(provider.id)
