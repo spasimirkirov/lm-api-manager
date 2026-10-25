@@ -47,6 +47,7 @@ try {
     if ($stderr.Contains($token)) { throw "The session token appeared in stderr" }
     Write-Host 'Smoke test passed'
 } finally {
-    if (-not $process.HasExited) { $process.Kill() }
+    # A one-file exe runs as a bootloader plus a child: stop the whole tree.
+    if (-not $process.HasExited) { taskkill /T /F /PID $process.Id | Out-Null }
     Remove-Item -Recurse -Force $homeDir -ErrorAction SilentlyContinue
 }
