@@ -30,7 +30,9 @@ exe = EXE(
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    # No console window: a double-click opens only the settings; Pal Engine reads the
+    # server's stdout through pipes it passes in.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

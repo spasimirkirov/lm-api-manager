@@ -5,7 +5,6 @@ four characters of a saved key and never prints one.
 """
 
 import asyncio
-import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -236,25 +235,28 @@ class SettingsWindow:
                   text="Your own API keys for OpenAI-compatible services. Pal Engine lists their models as "
                        "\"<provider>/<model>\". Usage is billed by the provider to your account.").pack(anchor="w", pady=(2, 10))
         ttk.Separator(frame).pack(fill="x")
-        self.tree = ttk.Treeview(frame, columns=("name", "url", "key"), show="headings", selectmode="browse")
-        for column, title, width in (("name", "Name", 170), ("url", "Base URL", 380), ("key", "API key", 110)):
-            self.tree.heading(column, text=title, anchor="w")
-            self.tree.column(column, width=width, anchor="w")
-        self.tree.pack(fill="both", expand=True, pady=(4, 4))
-        self.tree.bind("<Double-1>", lambda _e: self.edit())
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self.update_buttons())
-        ttk.Separator(frame).pack(fill="x")
-        self.status_var = tk.StringVar()
+        # The bottom rows are packed before the list, so a growing list can never push them out.
+        self.status_var = tk.StringVar(value="Add a provider to start: pick one, paste your API key, Save.")
+        ttk.Label(frame, textvariable=self.status_var, style="Muted.TLabel", wraplength=700).pack(
+            side="bottom", anchor="w", pady=(8, 0))
         buttons = ttk.Frame(frame)
-        buttons.pack(fill="x", pady=(10, 0))
-        ttk.Button(buttons, text="Add", style="Accent.TButton", command=self.add).pack(side="left")
+        buttons.pack(side="bottom", fill="x", pady=(10, 0))
+        ttk.Button(buttons, text="Add provider", style="Accent.TButton", command=self.add).pack(side="left")
         self.edit_button = ttk.Button(buttons, text="Edit", command=self.edit)
         self.edit_button.pack(side="left", padx=(8, 0))
         self.test_button = ttk.Button(buttons, text="Test connection", command=self.test)
         self.test_button.pack(side="left", padx=(8, 0))
         self.remove_button = ttk.Button(buttons, text="Remove", command=self.remove)
         self.remove_button.pack(side="left", padx=(8, 0))
-        ttk.Label(buttons, textvariable=self.status_var, style="Muted.TLabel").pack(side="left", padx=(14, 0))
+        ttk.Separator(frame).pack(side="bottom", fill="x")
+        self.tree = ttk.Treeview(frame, columns=("name", "url", "key"), show="headings", selectmode="browse",
+                                 height=6)
+        for column, title, width in (("name", "Name", 170), ("url", "Base URL", 380), ("key", "API key", 110)):
+            self.tree.heading(column, text=title, anchor="w")
+            self.tree.column(column, width=width, anchor="w")
+        self.tree.pack(fill="both", expand=True, pady=(4, 4))
+        self.tree.bind("<Double-1>", lambda _e: self.edit())
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self.update_buttons())
         self.refresh()
 
     def selected(self):
@@ -321,20 +323,7 @@ class SettingsWindow:
         run_in_thread(self.root, lambda: fetch_models(provider, key), done)
 
 
-def hide_own_console() -> None:
-    """A double-click opens a console behind the window: hide it when no terminal shares it."""
-    if sys.platform != "win32":
-        return
-    import ctypes
-
-    kernel32 = ctypes.windll.kernel32
-    processes = (ctypes.c_uint * 4)()
-    if kernel32.GetConsoleProcessList(processes, 4) == 1:
-        ctypes.windll.user32.ShowWindow(kernel32.GetConsoleWindow(), 0)
-
-
 def run_settings() -> int:
-    hide_own_console()
     root = tk.Tk()
     apply_theme(root)
     SettingsWindow(root, KeyVault())

@@ -28,7 +28,13 @@ $dist = Join-Path $PSScriptRoot 'dist'
 $exePath = Join-Path $dist 'LmOpenAiProvider.exe'
 
 # The exe and the manifest must name the same version (the updater compares the manifest).
-$exeVersion = (& $exePath --version).Trim()
+# The exe has no console, so its output is read through a pipe (as Pal Engine does).
+$info = New-Object System.Diagnostics.ProcessStartInfo $exePath, '--version'
+$info.UseShellExecute = $false
+$info.RedirectStandardOutput = $true
+$probe = [System.Diagnostics.Process]::Start($info)
+$exeVersion = $probe.StandardOutput.ReadToEnd().Trim()
+$probe.WaitForExit()
 if ($exeVersion -ne $version) { throw "Exe version $exeVersion does not match manifest.json version $version" }
 
 Copy-Item (Join-Path $PSScriptRoot 'manifest.json') $dist -Force

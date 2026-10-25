@@ -24,7 +24,7 @@ Pal Engine checks this repository for new releases and offers updates in Setting
 LmOpenAiProvider.exe --settings      Open the provider settings window (also: no arguments)
 LmOpenAiProvider.exe --serve [--parent-pid PID]
                                      Run the local server (started by Pal Engine)
-LmOpenAiProvider.exe --version       Print the version
+LmOpenAiProvider.exe --version       Print the version (to a pipe: the exe has no console window)
 ```
 
 ### Providers
