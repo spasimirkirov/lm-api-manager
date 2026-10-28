@@ -9,14 +9,17 @@ to the provider you chose.
 This is a separate add-on (an Integration), not part of Pal Engine, and is released from this
 repository. Usage is billed by your provider to your account, not by Pal Engine.
 
-## Install
+## Install in Pal Engine
 
-1. Download `LmOpenAiProvider-<version>.zip` from the latest release.
-2. In Pal Engine, open **Settings › Integrations › Import** and choose the zip.
+1. Download `LmOpenAiProvider-<version>.zip` from the
+   [latest release](https://github.com/spasimirkirov/lm-open-ai-provider/releases/latest).
+2. In Pal Engine, open **Settings › Integrations**, click **Add Zip**, choose the zip and click
+   **Save**.
 3. Click **Open settings** on the integration, add a provider and its API key, and click **Test connection**.
 4. In **Settings › AI Models**, pick **LM OpenAI Provider** as the chat provider and choose a model.
 
-Pal Engine checks this repository for new releases and offers updates in Settings › Integrations.
+Updates: Pal Engine checks this repository for new releases. When one is out, **Settings ›
+Integrations** shows an **Update** button next to the integration. Needs an internet connection.
 
 ## Usage
 
