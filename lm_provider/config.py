@@ -1,12 +1,16 @@
 """Provider list (non-secret, providers.json) and API keys (Windows Credential Manager only).
 
-The list lives in %APPDATA%\\PalEngine\\lm-open-ai-provider\\providers.json. A key is stored by
+The list lives in %APPDATA%\\PalEngine\\lm-api-manager\\providers.json. A key is stored by
 `keyring` under the provider id; it is never written to a file, a log or stdout, and the
 settings window shows only its last four characters.
+
+Until 0.2.0 the app was called "LM OpenAI Provider": its list and keys are taken over on first
+use (the list is copied, the old file stays; a key moves on its first read).
 """
 
 import json
 import os
+import shutil
 import re
 import tempfile
 from dataclasses import asdict, dataclass, field
@@ -15,7 +19,10 @@ from urllib.parse import urlparse
 
 from .presets import preset_for
 
-KEYRING_SERVICE = "PalEngine.LmOpenAiProvider"
+KEYRING_SERVICE = "PalEngine.LmApiManager"
+LEGACY_KEYRING_SERVICE = "PalEngine.LmOpenAiProvider"
+CONFIG_DIR_NAME = "lm-api-manager"
+LEGACY_CONFIG_DIR_NAME = "lm-open-ai-provider"
 PROVIDER_TYPES = ("llm",)
 FILE_VERSION = 1
 # A provider id is the model prefix ("<id>/<model>"): no slash, short, lowercase.
@@ -27,16 +34,36 @@ class ConfigError(ValueError):
     """A provider entry the user has to fix (shown as is in the settings window)."""
 
 
+def _palengine_dir() -> Path:
+    return Path(os.environ.get("APPDATA") or str(Path.home())) / "PalEngine"
+
+
 def config_dir() -> Path:
     override = os.environ.get("LM_PROVIDER_HOME")
     if override:
         return Path(override)
-    base = os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "PalEngine" / "lm-open-ai-provider"
+    return _palengine_dir() / CONFIG_DIR_NAME
+
+
+def migrate_legacy_providers(new_dir: Path, old_dir: Path) -> bool:
+    """Copy the old providers.json into the new folder when the new one has none yet.
+    The old file is kept (an older install may still read it). True when a copy was made."""
+    new_file, old_file = new_dir / "providers.json", old_dir / "providers.json"
+    if new_file.exists() or not old_file.is_file():
+        return False
+    try:
+        new_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(old_file, new_file)
+    except OSError:
+        return False
+    return True
 
 
 def providers_path() -> Path:
-    return config_dir() / "providers.json"
+    directory = config_dir()
+    if not os.environ.get("LM_PROVIDER_HOME"):
+        migrate_legacy_providers(directory, _palengine_dir() / LEGACY_CONFIG_DIR_NAME)
+    return directory / "providers.json"
 
 
 @dataclass
@@ -146,21 +173,35 @@ def save_providers(providers, path: Path = None) -> None:
 class KeyVault:
     """API keys in the OS credential store (Windows Credential Manager, DPAPI)."""
 
-    def __init__(self, service: str = KEYRING_SERVICE):
+    def __init__(self, service: str = KEYRING_SERVICE, legacy_service: str = LEGACY_KEYRING_SERVICE):
         import keyring  # imported here so tests and --version need no backend
 
         self._keyring = keyring
         self._service = service
+        self._legacy_service = legacy_service
 
     def get(self, provider_id: str):
-        return self._keyring.get_password(self._service, provider_id)
+        key = self._keyring.get_password(self._service, provider_id)
+        if key or not self._legacy_service:
+            return key
+        # A key saved under the old name (LM OpenAI Provider) moves to the new one.
+        key = self._keyring.get_password(self._legacy_service, provider_id)
+        if key:
+            self._keyring.set_password(self._service, provider_id, key)
+            self._delete(self._legacy_service, provider_id)
+        return key
 
     def set(self, provider_id: str, key: str) -> None:
         self._keyring.set_password(self._service, provider_id, key)
 
     def delete(self, provider_id: str) -> None:
+        self._delete(self._service, provider_id)
+        if self._legacy_service:
+            self._delete(self._legacy_service, provider_id)
+
+    def _delete(self, service: str, provider_id: str) -> None:
         try:
-            self._keyring.delete_password(self._service, provider_id)
+            self._keyring.delete_password(service, provider_id)
         except self._keyring.errors.PasswordDeleteError:
             pass
 

@@ -78,7 +78,7 @@ def map_status(provider, status: int, raw: bytes, keys) -> UpstreamError:
     providers echo part of the key in it."""
     name = provider.name
     if status == 401:
-        return UpstreamError(401, f"{name} rejected the API key. Check it in the LM OpenAI Provider settings.",
+        return UpstreamError(401, f"{name} rejected the API key. Check it in the LM API Manager settings.",
                              "invalid_api_key", "authentication_error")
     if status == 402:
         return UpstreamError(402, f"{name} needs payment: check the balance or billing of your account.",

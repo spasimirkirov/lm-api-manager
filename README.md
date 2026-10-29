@@ -1,4 +1,4 @@
-# LM OpenAI Provider
+# LM API Manager
 
 A small local gateway for Pal Engine that lets you chat through **your own** AI provider accounts
 (OpenAI, DeepSeek, OpenRouter, Groq, Mistral, Ollama Cloud, Google Gemini, Anthropic, or any other
@@ -11,23 +11,38 @@ repository. Usage is billed by your provider to your account, not by Pal Engine.
 
 ## Install in Pal Engine
 
-1. Download `LmOpenAiProvider-<version>.zip` from the
-   [latest release](https://github.com/spasimirkirov/lm-open-ai-provider/releases/latest).
+The easy way: in Pal Engine, open **Settings › Integrations** and click **Download** next to
+**LM API Manager**. Pal Engine downloads the latest release from this repository and installs it.
+
+By hand (Add Zip):
+
+1. Download `LmApiManager-<version>.zip` from the
+   [latest release](https://github.com/spasimirkirov/lm-api-manager/releases/latest).
 2. In Pal Engine, open **Settings › Integrations**, click **Add Zip**, choose the zip and click
    **Save**.
-3. Click **Open settings** on the integration, add a provider and its API key, and click **Test connection**.
-4. In **Settings › AI Models**, pick **LM OpenAI Provider** as the chat provider and choose a model.
+
+Then:
+
+1. Click **Open settings** on the integration. The **LM API Manager** window opens (maximized):
+   your providers on the left, the selected one on the right. Click **Add provider**, paste its API
+   key and click **Test connection**.
+2. In **Settings › AI Models**, pick **LM API Manager** as the chat provider and choose a model.
 
 Updates: Pal Engine checks this repository for new releases. When one is out, **Settings ›
 Integrations** shows an **Update** button next to the integration. Needs an internet connection.
 
+Until 0.2.0 this add-on was called **LM OpenAI Provider** (repository `lm-open-ai-provider`). An
+installed LM OpenAI Provider updates to LM API Manager in place: the first start copies the
+provider list from `%APPDATA%\PalEngine\lm-open-ai-provider` (the old file stays) and each saved
+key moves to the new Credential Manager entry (`PalEngine.LmApiManager`) when it is first read.
+
 ## Usage
 
 ```
-LmOpenAiProvider.exe --settings      Open the provider settings window (also: no arguments)
-LmOpenAiProvider.exe --serve [--parent-pid PID]
-                                     Run the local server (started by Pal Engine)
-LmOpenAiProvider.exe --version       Print the version (to a pipe: the exe has no console window)
+LmApiManager.exe --settings      Open the LM API Manager window (also: no arguments)
+LmApiManager.exe --serve [--parent-pid PID]
+                                 Run the local server (started by Pal Engine)
+LmApiManager.exe --version       Print the version (to a pipe: the exe has no console window)
 ```
 
 ### Providers
@@ -51,7 +66,7 @@ the ones Pal Engine may use (none ticked means all). A model is marked **(free)*
 provider itself reports it, with a `:free` id or a zero price in its model list (OpenRouter does);
 providers whose list carries no prices (for example Ollama Cloud) show no mark.
 
-The provider list (no keys) is saved in `%APPDATA%\PalEngine\lm-open-ai-provider\providers.json`.
+The provider list (no keys) is saved in `%APPDATA%\PalEngine\lm-api-manager\providers.json`.
 
 ## Security model
 
@@ -76,7 +91,7 @@ The provider list (no keys) is saved in `%APPDATA%\PalEngine\lm-open-ai-provider
 On start the server prints one line to stdout:
 
 ```json
-{"event": "ready", "port": 50123, "version": "0.1.0", "protocol": 1}
+{"event": "ready", "port": 50123, "version": "0.2.0", "protocol": 1}
 ```
 
 | Endpoint | Purpose |
@@ -95,7 +110,7 @@ Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`, for exampl
 py -3.13 -m venv venv
 venv\Scripts\python -m pip install -r requirements-dev.txt
 venv\Scripts\python -m pytest -q
-./build_exe.ps1            # builds dist\LmOpenAiProvider.exe and the plugin zip
+./build_exe.ps1            # builds dist\LmApiManager.exe and the plugin zip
 ./scripts/smoke_test.ps1   # checks the built exe's handshake
 ```
 

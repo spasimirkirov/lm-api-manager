@@ -1,7 +1,8 @@
-"""Provider settings window (--settings): add, edit, remove, test. tkinter, no web view.
+"""LM API Manager window (--settings): add, edit, remove, test providers. tkinter, no web view.
 
-Keys go straight from the entry field to the credential store; the window shows only the last
-four characters of a saved key and never prints one.
+One maximized window: a header that says where the keys live, the providers on the left, the
+selected provider's form on the right. Keys go straight from the entry field to the credential
+store; the window shows only the last four characters of a saved key and never prints one.
 """
 
 import asyncio
@@ -23,12 +24,15 @@ from .config import (
 from .presets import CUSTOM_PRESET_ID, PRESETS, preset_for
 from .upstream import UpstreamError, list_models, new_session
 
+APP_NAME = "LM API Manager"
 BG = "#0d1117"
 PANEL = "#161b22"
 FG = "#e6edf3"
 MUTED = "#8b949e"
 ACCENT = "#22d3ee"
 DIVIDER = "#30363d"
+SELECTED = "#0e4a57"
+OK = "#3fb950"
 TYPE_LABELS = {"llm": "Chat (LLM)"}
 CUSTOM_LABEL = "Custom"
 
@@ -42,6 +46,13 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure("TLabel", background=BG, foreground=FG)
     style.configure("Muted.TLabel", foreground=MUTED)
     style.configure("Title.TLabel", font=("Segoe UI Semibold", 13), foreground=ACCENT)
+    style.configure("Header.TFrame", background=PANEL)
+    style.configure("Brand.TLabel", background=PANEL, foreground=FG, font=("Segoe UI Semibold", 18))
+    style.configure("HeaderMuted.TLabel", background=PANEL, foreground=MUTED)
+    style.configure("Shield.TLabel", background=PANEL, foreground=OK, font=("Segoe UI Semibold", 10))
+    style.configure("Section.TLabel", foreground=MUTED, font=("Segoe UI Semibold", 9))
+    style.configure("Empty.TLabel", foreground=FG, font=("Segoe UI Semibold", 14))
+    style.configure("Danger.TButton", foreground="#f85149", bordercolor="#f85149")
     style.configure("TButton", background=PANEL, foreground=FG, padding=(12, 5), borderwidth=1)
     style.map("TButton", background=[("active", "#1f2937"), ("disabled", BG)],
               foreground=[("disabled", MUTED)], bordercolor=[("focus", ACCENT)])
@@ -85,13 +96,15 @@ class ProviderForm(ttk.Frame):
     """Add or edit one provider, shown in place of the list in the same window.
     `on_save(provider, new_key_or_None)` stores it; `on_close()` goes back to the list."""
 
-    def __init__(self, master, vault, existing: Provider, taken_ids, on_save, on_close):
-        super().__init__(master, padding=18)
+    def __init__(self, master, vault, existing: Provider, taken_ids, on_save, on_close, on_remove=None):
+        super().__init__(master, padding=(24, 18))
         self.vault = vault
         self.existing = existing
         self.taken_ids = taken_ids
         self.on_save = on_save
         self.on_close = on_close
+        self.on_remove = on_remove
+        self.confirm_remove = False
         self.saved_key = vault.get(existing.id) if existing else ""
 
         self.preset_labels = [p.name for p in PRESETS] + [CUSTOM_LABEL]
@@ -112,7 +125,7 @@ class ProviderForm(ttk.Frame):
         self.free = set()
         self.visible = []
 
-        ttk.Label(self, text="Edit provider" if existing else "Add provider", style="Title.TLabel").grid(
+        ttk.Label(self, text=existing.name if existing else "Add provider", style="Title.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w")
         ttk.Separator(self).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 10))
         left = ttk.Frame(self)
@@ -124,7 +137,7 @@ class ProviderForm(ttk.Frame):
             ttk.Label(left, text=label).pack(anchor="w", pady=(0, 2))
             widget.pack(fill="x", pady=(0, 2))
             if hint:
-                ttk.Label(left, text=hint, style="Muted.TLabel", wraplength=330).pack(anchor="w")
+                ttk.Label(left, text=hint, style="Muted.TLabel", wraplength=560).pack(anchor="w")
             ttk.Frame(left, height=8).pack()
 
         preset_box = ttk.Combobox(left, textvariable=self.preset_var, values=self.preset_labels,
@@ -141,7 +154,7 @@ class ProviderForm(ttk.Frame):
                                    state="readonly"))
 
         ttk.Label(right, text="Models").pack(anchor="w", pady=(0, 2))
-        ttk.Label(right, style="Muted.TLabel", wraplength=380,
+        ttk.Label(right, style="Muted.TLabel", wraplength=560,
                   text="Click models to tick the ones Pal Engine may use. None ticked means all of them. "
                        "Test connection loads the list. (free) is shown when the provider reports a zero price."
                   ).pack(anchor="w", pady=(0, 6))
@@ -169,7 +182,12 @@ class ProviderForm(ttk.Frame):
         self.test_button = ttk.Button(buttons, text="Test connection", command=self.test)
         self.test_button.pack(side="left")
         ttk.Button(buttons, text="Save", style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Cancel", command=self.on_close).pack(side="left", padx=(8, 0))
+        if existing and on_remove:
+            # Confirmed in place: the first click asks, the second removes.
+            self.remove_button = ttk.Button(buttons, text="Remove", style="Danger.TButton", command=self.remove)
+            self.remove_button.pack(side="left", padx=(24, 0))
+        else:
+            ttk.Button(buttons, text="Cancel", command=self.on_close).pack(side="left", padx=(8, 0))
         ttk.Label(self, textvariable=self.status_var, style="Muted.TLabel", wraplength=740).grid(
             row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.columnconfigure(0, weight=1, uniform="cols")
@@ -268,6 +286,14 @@ class ProviderForm(ttk.Frame):
 
         run_in_thread(self, lambda: fetch_models(provider, key), done)
 
+    def remove(self):
+        if not self.confirm_remove:
+            self.confirm_remove = True
+            self.remove_button.configure(text="Confirm remove")
+            self.status_var.set(f"Click Confirm remove to delete {self.existing.name} and its saved API key.")
+            return
+        self.on_remove(self.existing)
+
     def save(self):
         try:
             provider = self.build()
@@ -284,7 +310,7 @@ class ProviderForm(ttk.Frame):
             self.status_var.set(f"Could not save: {type(error).__name__}")
             return
         self.key_var.set("")
-        self.on_close()
+        self.on_close(provider.id)
 
 
 class SettingsWindow:
@@ -292,65 +318,117 @@ class SettingsWindow:
         self.root = root
         self.vault = vault
         self.providers = load_providers()
-        root.title(f"LM OpenAI Provider {__version__}")
-        root.geometry("900x660")
-        root.minsize(760, 560)
         self.form = None
-        self.pending_remove = None
-        # One window: the list, or the add/edit form in its place.
-        frame = self.list_frame = ttk.Frame(root, padding=18)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Providers", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(frame, style="Muted.TLabel", wraplength=700,
-                  text="Your own API keys for OpenAI-compatible services. Pal Engine lists their models as "
-                       "\"<provider>/<model>\". Usage is billed by the provider to your account.").pack(anchor="w", pady=(2, 10))
-        ttk.Separator(frame).pack(fill="x")
-        # The bottom rows are packed before the list, so a growing list can never push them out.
-        self.status_var = tk.StringVar(value="Add a provider to start: pick one, paste your API key, Save.")
-        ttk.Label(frame, textvariable=self.status_var, style="Muted.TLabel", wraplength=700).pack(
-            side="bottom", anchor="w", pady=(8, 0))
-        buttons = ttk.Frame(frame)
-        buttons.pack(side="bottom", fill="x", pady=(10, 0))
-        ttk.Button(buttons, text="Add provider", style="Accent.TButton", command=self.add).pack(side="left")
-        self.edit_button = ttk.Button(buttons, text="Edit", command=self.edit)
-        self.edit_button.pack(side="left", padx=(8, 0))
-        self.test_button = ttk.Button(buttons, text="Test connection", command=self.test)
-        self.test_button.pack(side="left", padx=(8, 0))
-        self.remove_button = ttk.Button(buttons, text="Remove", command=self.remove)
-        self.remove_button.pack(side="left", padx=(8, 0))
-        ttk.Separator(frame).pack(side="bottom", fill="x")
-        self.tree = ttk.Treeview(frame, columns=("name", "url", "key"), show="headings", selectmode="browse",
-                                 height=6)
-        for column, title, width in (("name", "Name", 170), ("url", "Base URL", 380), ("key", "API key", 110)):
-            self.tree.heading(column, text=title, anchor="w")
-            self.tree.column(column, width=width, anchor="w")
-        self.tree.pack(fill="both", expand=True, pady=(4, 4))
-        self.tree.bind("<Double-1>", lambda _e: self.edit())
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self.update_buttons())
-        self.root.bind("<Escape>", lambda _e: self.close_form())
-        self.refresh()
+        self.shown = []  # provider ids in list order
+        root.title(f"{APP_NAME} {__version__}")
+        root.geometry("1100x720")
+        root.minsize(900, 600)
+        try:
+            root.state("zoomed")  # maximized on Windows
+        except tk.TclError:
+            pass
 
-    def selected(self):
-        selection = self.tree.selection()
-        return next((p for p in self.providers if p.id in selection), None)
+        header = ttk.Frame(root, style="Header.TFrame", padding=(24, 14))
+        header.pack(fill="x")
+        brand = ttk.Frame(header, style="Header.TFrame")
+        brand.pack(side="left")
+        ttk.Label(brand, text=APP_NAME, style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(brand, style="HeaderMuted.TLabel",
+                  text=f"Version {__version__} · the bridge between Pal Engine and your AI providers").pack(anchor="w")
+        shield = ttk.Frame(header, style="Header.TFrame")
+        shield.pack(side="right")
+        ttk.Label(shield, text="\U0001F512 Your keys stay on this PC", style="Shield.TLabel").pack(anchor="e")
+        ttk.Label(shield, style="HeaderMuted.TLabel",
+                  text="Encrypted in Windows Credential Manager. Pal Engine never sees them.").pack(anchor="e")
+        ttk.Separator(root).pack(fill="x")
 
-    def update_buttons(self):
-        selected = self.selected()
-        if not selected or selected.id != self.pending_remove:
-            self.pending_remove = None
-            self.remove_button.configure(text="Remove")
-        state = ["!disabled"] if selected else ["disabled"]
-        for button in (self.edit_button, self.test_button, self.remove_button):
-            button.state(state)
+        # The footer is packed before the body, so the body can never push it out.
+        footer = ttk.Frame(root, padding=(24, 6))
+        footer.pack(side="bottom", fill="x")
+        self.status_var = tk.StringVar(value="Usage is billed by each provider to your own account, not by Pal Engine.")
+        ttk.Label(footer, textvariable=self.status_var, style="Muted.TLabel").pack(anchor="w")
+        ttk.Separator(root).pack(side="bottom", fill="x")
+
+        body = ttk.Frame(root)
+        body.pack(fill="both", expand=True)
+        side = ttk.Frame(body, padding=(18, 16, 12, 16), width=300)
+        side.pack(side="left", fill="y")
+        side.pack_propagate(False)
+        ttk.Label(side, text="PROVIDERS", style="Section.TLabel").pack(anchor="w")
+        ttk.Button(side, text="+  Add provider", style="Accent.TButton", command=self.add).pack(
+            side="bottom", anchor="w", pady=(10, 0))
+        self.listbox = tk.Listbox(side, activestyle="none", exportselection=False, bg=BG, fg=FG,
+                                  selectbackground=SELECTED, selectforeground=ACCENT, highlightthickness=0,
+                                  relief="flat", borderwidth=0, font=("Segoe UI", 11))
+        self.listbox.pack(fill="both", expand=True, pady=(8, 0))
+        self.listbox.bind("<<ListboxSelect>>", lambda _e: self.show_selected())
+        ttk.Separator(body, orient="vertical").pack(side="left", fill="y")
+        self.content = ttk.Frame(body)
+        self.content.pack(side="left", fill="both", expand=True)
+
+        self.root.bind("<Escape>", lambda _e: self.show_selected())
+        self.refresh(select_id=self.providers[0].id if self.providers else None)
+
+    def selected_id(self):
+        picked = self.listbox.curselection()
+        return self.shown[picked[0]] if picked else None
 
     def refresh(self, select_id=None):
-        self.tree.delete(*self.tree.get_children())
+        """The provider list (a muted dot: no saved key), then the selected one's form."""
+        self.listbox.delete(0, "end")
+        self.shown = []
         for provider in self.providers:
-            self.tree.insert("", "end", iid=provider.id,
-                             values=(provider.name, provider.base_url, key_hint(self.vault.get(provider.id) or "")))
-        if select_id and self.tree.exists(select_id):
-            self.tree.selection_set(select_id)
-        self.update_buttons()
+            has_key = bool(self.vault.get(provider.id))
+            self.listbox.insert("end", f"  ●  {provider.name}")
+            self.listbox.itemconfigure("end", foreground=FG if has_key else MUTED)
+            self.shown.append(provider.id)
+        if select_id in self.shown:
+            index = self.shown.index(select_id)
+            self.listbox.selection_set(index)
+            self.listbox.see(index)
+        self.show_selected()
+
+    def clear_content(self):
+        self.form = None
+        for child in self.content.winfo_children():
+            child.destroy()
+
+    def show_selected(self):
+        provider_id = self.selected_id()
+        provider = next((p for p in self.providers if p.id == provider_id), None)
+        if provider:
+            self.open_form(provider)
+        else:
+            self.show_empty()
+
+    def show_empty(self):
+        self.clear_content()
+        empty = ttk.Frame(self.content, padding=(32, 28))
+        empty.pack(fill="both", expand=True)
+        if self.providers:
+            ttk.Label(empty, text="Pick a provider on the left", style="Empty.TLabel").pack(anchor="w")
+            return
+        ttk.Label(empty, text="Connect your first AI provider", style="Empty.TLabel").pack(anchor="w")
+        steps = ("1.  Click Add provider and pick a service (OpenAI, DeepSeek, OpenRouter...).",
+                 "2.  Paste your API key. It goes straight into Windows Credential Manager.",
+                 "3.  Test connection, tick the models Pal Engine may use, and Save.",
+                 "4.  In Pal Engine, choose this add-on as the provider.")
+        for step in steps:
+            ttk.Label(empty, text=step, style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
+        ttk.Button(empty, text="+  Add provider", style="Accent.TButton", command=self.add).pack(
+            anchor="w", pady=(18, 0))
+
+    def open_form(self, existing):
+        self.clear_content()
+        self.form = ProviderForm(self.content, self.vault, existing, {p.id for p in self.providers},
+                                 self.store, self.close_form, on_remove=self.remove)
+        self.form.pack(fill="both", expand=True)
+
+    def close_form(self, saved_id=None):
+        if saved_id:
+            self.refresh(select_id=saved_id)
+        else:
+            self.show_selected()
 
     def store(self, provider: Provider, new_key):
         # Key first: the server reloads when the file changes and must find the key then.
@@ -361,59 +439,18 @@ class SettingsWindow:
         others.insert(index, provider)
         save_providers(others)
         self.providers = others
-        self.refresh(select_id=provider.id)
         self.status_var.set(f"Saved {provider.name}.")
 
-    def open_form(self, existing):
-        self.close_form()
-        self.list_frame.pack_forget()
-        self.form = ProviderForm(self.root, self.vault, existing, {p.id for p in self.providers},
-                                 self.store, self.close_form)
-        self.form.pack(fill="both", expand=True)
-
-    def close_form(self):
-        if self.form is None:
-            return
-        self.form.destroy()
-        self.form = None
-        self.list_frame.pack(fill="both", expand=True)
-
     def add(self):
+        self.listbox.selection_clear(0, "end")
         self.open_form(None)
 
-    def edit(self):
-        provider = self.selected()
-        if provider:
-            self.open_form(provider)
-
-    def remove(self):
-        provider = self.selected()
-        if not provider:
-            return
-        # Confirmed in place: the first click asks, a second click on the same row removes.
-        if self.pending_remove != provider.id:
-            self.pending_remove = provider.id
-            self.remove_button.configure(text="Confirm remove")
-            self.status_var.set(f"Click Confirm remove to delete {provider.name} and its saved API key.")
-            return
-        self.pending_remove = None
+    def remove(self, provider: Provider):
         self.providers = [p for p in self.providers if p.id != provider.id]
         save_providers(self.providers)
         self.vault.delete(provider.id)
-        self.refresh()
-        self.status_var.set(f"Removed {provider.name}.")
-
-    def test(self):
-        provider = self.selected()
-        if not provider:
-            return
-        key = self.vault.get(provider.id) or ""
-        self.status_var.set(f"Testing {provider.name}...")
-
-        def done(entries, error):
-            self.status_var.set(describe_error(error) if error else f"{provider.name}: connected, {len(entries)} models.")
-
-        run_in_thread(self.root, lambda: fetch_models(provider, key), done)
+        self.status_var.set(f"Removed {provider.name} and its saved API key.")
+        self.refresh(select_id=self.providers[0].id if self.providers else None)
 
 
 # Windows virtual key codes of the edit shortcuts. Tk matches Ctrl+V by the letter, so with a

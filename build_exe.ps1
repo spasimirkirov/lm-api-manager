@@ -20,12 +20,12 @@ function Invoke-Native([string]$What, [scriptblock]$Command) {
 }
 
 Invoke-Native 'pip install' { & $Python -m pip install -r requirements.txt pyinstaller }
-Invoke-Native 'PyInstaller' { & $Python -m PyInstaller --clean --noconfirm LmOpenAiProvider.spec }
+Invoke-Native 'PyInstaller' { & $Python -m PyInstaller --clean --noconfirm LmApiManager.spec }
 
 $manifest = Get-Content (Join-Path $PSScriptRoot 'manifest.json') -Raw | ConvertFrom-Json
 $version = if ($manifest.version) { [string]$manifest.version } else { '0.0.0' }
 $dist = Join-Path $PSScriptRoot 'dist'
-$exePath = Join-Path $dist 'LmOpenAiProvider.exe'
+$exePath = Join-Path $dist 'LmApiManager.exe'
 
 # The exe and the manifest must name the same version (the updater compares the manifest).
 # The exe has no console, so its output is read through a pipe (as Pal Engine does).
@@ -41,13 +41,13 @@ Copy-Item (Join-Path $PSScriptRoot 'manifest.json') $dist -Force
 Copy-Item (Join-Path $PSScriptRoot 'README.md') $dist -Force
 Copy-Item (Join-Path $PSScriptRoot 'LICENSE') (Join-Path $dist 'LICENSE.txt') -Force
 
-$zipPath = Join-Path $dist "LmOpenAiProvider-$version.zip"
+$zipPath = Join-Path $dist "LmApiManager-$version.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
 Push-Location $dist
 try {
     Compress-Archive -Path @(
-        'LmOpenAiProvider.exe',
+        'LmApiManager.exe',
         'manifest.json',
         'README.md',
         'LICENSE.txt'

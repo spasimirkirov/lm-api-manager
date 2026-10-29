@@ -1,6 +1,6 @@
 # Starts the built exe in server mode the way Pal Engine does and checks the handshake:
 # the ready line, the token check, the Origin check, and exit when stdin closes.
-param([string]$Exe = (Join-Path $PSScriptRoot '..\dist\LmOpenAiProvider.exe'))
+param([string]$Exe = (Join-Path $PSScriptRoot '..\dist\LmApiManager.exe'))
 
 $ErrorActionPreference = 'Stop'
 $bytes = New-Object byte[] 32
