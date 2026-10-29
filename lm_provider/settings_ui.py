@@ -8,6 +8,7 @@ store; the window shows only the last four characters of a saved key and never p
 import asyncio
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk
 
 from . import __version__
@@ -17,11 +18,13 @@ from .config import (
     Provider,
     key_hint,
     load_providers,
+    normalize_services,
     save_providers,
     unique_id,
     validate_provider,
 )
-from .presets import CUSTOM_PRESET_ID, PRESETS, preset_for
+from .presets import CUSTOM_PRESET_ID, PRESETS, preset_for, preset_services
+from .services import guess_services
 from .upstream import UpstreamError, list_models, new_session
 
 APP_NAME = "LM API Manager"
@@ -33,7 +36,8 @@ ACCENT = "#22d3ee"
 DIVIDER = "#30363d"
 SELECTED = "#0e4a57"
 OK = "#3fb950"
-TYPE_LABELS = {"llm": "Chat (LLM)"}
+SERVICE_LABELS = {"chat": "Chat", "vision": "Vision", "tts": "Voice (TTS)", "images": "Pictures"}
+SERVICE_TAGS = {"chat": "chat", "vision": "vision", "tts": "voice", "images": "pictures"}
 CUSTOM_LABEL = "Custom"
 
 
@@ -67,6 +71,10 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure("Treeview.Heading", background=BG, foreground=MUTED, borderwidth=0, relief="flat")
     style.map("Treeview", background=[("selected", "#1f2937")], foreground=[("selected", ACCENT)])
     style.configure("TSeparator", background=DIVIDER)
+    style.configure("TCheckbutton", background=BG, foreground=FG)
+    style.map("TCheckbutton", background=[("active", BG)], foreground=[("disabled", MUTED)])
+    style.configure("Tag.TLabel", background=PANEL, foreground=ACCENT, font=("Segoe UI", 9), padding=(6, 1))
+    style.configure("Link.TLabel", foreground=ACCENT, font=("Segoe UI", 10, "underline"))
 
 
 def run_in_thread(root, work, done):
@@ -84,6 +92,17 @@ def run_in_thread(root, work, done):
 async def fetch_models(provider: Provider, key: str) -> list:
     async with new_session() as session:
         return await list_models(session, provider, key)
+
+
+def tags_text(services) -> str:
+    return "  ".join(SERVICE_TAGS[s] for s in services if s in SERVICE_TAGS)
+
+
+def link(parent, text: str, url: str):
+    """A text link that opens in the default browser."""
+    label = ttk.Label(parent, text=text, style="Link.TLabel", cursor="hand2")
+    label.bind("<Button-1>", lambda _e: webbrowser.open(url))
+    return label
 
 
 def describe_error(error) -> str:
@@ -113,14 +132,15 @@ class ProviderForm(ttk.Frame):
         self.name_var = tk.StringVar(value=existing.name if existing else PRESETS[0].name)
         self.url_var = tk.StringVar(value=existing.base_url if existing else PRESETS[0].base_url)
         self.key_var = tk.StringVar()
-        self.type_var = tk.StringVar(value=TYPE_LABELS["llm"])
         self.status_var = tk.StringVar()
         self.filter_var = tk.StringVar()
         self.filter_var.trace_add("write", lambda *_: self.show_models())
         self.models_note_var = tk.StringVar()
-        # Ticked models (the allow-list), every model the provider offered when tested, and
-        # the ones it reports as free.
-        self.chosen = set(existing.models) if existing else set()
+        # Ticked models with their services, every model the provider offered when tested,
+        # and the ones it reports as free.
+        self.services = {m["id"]: list(m["services"]) for m in existing.models} if existing else {}
+        self.current = None  # the model whose services the checkboxes edit
+        self.service_vars = {name: tk.BooleanVar() for name in SERVICE_LABELS}
         self.offered = []
         self.free = set()
         self.visible = []
@@ -144,19 +164,20 @@ class ProviderForm(ttk.Frame):
                                   state="readonly")
         preset_box.bind("<<ComboboxSelected>>", self.on_preset)
         field("Provider", preset_box, "Fills the base URL. Pick Custom for any other OpenAI-compatible endpoint.")
+        self.catalog = ttk.Frame(left)
+        self.catalog.pack(fill="x", pady=(0, 6))
         field("Name", ttk.Entry(left, textvariable=self.name_var))
         self.url_entry = ttk.Entry(left, textvariable=self.url_var)
         field("Base URL", self.url_entry, "The address that ends before /chat/completions.")
         key_hint_text = (f"Saved key {key_hint(self.saved_key)}. Leave empty to keep it."
                          if self.saved_key else "Stored in Windows Credential Manager, never in a file.")
         field("API key", ttk.Entry(left, textvariable=self.key_var, show="\u2022"), key_hint_text)
-        field("Type", ttk.Combobox(left, textvariable=self.type_var, values=list(TYPE_LABELS.values()),
-                                   state="readonly"))
 
         ttk.Label(right, text="Models").pack(anchor="w", pady=(0, 2))
         ttk.Label(right, style="Muted.TLabel", wraplength=560,
-                  text="Click models to tick the ones Pal Engine may use. None ticked means all of them. "
-                       "Test connection loads the list. (free) is shown when the provider reports a zero price."
+                  text="Test connection loads the list. Click a model to tick it for Pal Engine and set what it "
+                       "is for below. Chat providers: none ticked means all models, as chat. Pictures and voices "
+                       "always need a tick. (free) is shown when the provider reports a zero price."
                   ).pack(anchor="w", pady=(0, 6))
         filter_row = ttk.Frame(right)
         filter_row.pack(fill="x", pady=(0, 4))
@@ -174,6 +195,19 @@ class ProviderForm(ttk.Frame):
         self.models_list.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="left", fill="y")
         self.models_list.bind("<<ListboxSelect>>", self.on_models_clicked)
+        self.models_list.bind("<Button-3>", self.on_models_right_click)
+        editor = ttk.Frame(right)
+        editor.pack(fill="x", pady=(8, 0))
+        self.editor_note_var = tk.StringVar()
+        ttk.Label(editor, textvariable=self.editor_note_var, style="Muted.TLabel", wraplength=560).pack(anchor="w")
+        self.service_boxes = {}
+        boxes = ttk.Frame(editor)
+        boxes.pack(anchor="w", pady=(4, 0))
+        for name, label in SERVICE_LABELS.items():
+            box = ttk.Checkbutton(boxes, text=label, variable=self.service_vars[name],
+                                  command=self.on_service_toggled)
+            box.pack(side="left", padx=(0, 14))
+            self.service_boxes[name] = box
         ttk.Label(right, textvariable=self.models_note_var, style="Muted.TLabel").pack(anchor="w", pady=(4, 0))
 
         ttk.Separator(self).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 10))
@@ -195,38 +229,106 @@ class ProviderForm(ttk.Frame):
         self.rowconfigure(2, weight=1)
         self.on_preset(initial=True)
         self.show_models()
+        self.show_editor()
         if existing and self.saved_key:
             self.test(quiet=True)
+
+    def allowed_services(self) -> tuple:
+        return preset_services(self.preset_id())
 
     def show_models(self):
         """Fills the list from the offered models plus the ticked ones, through the filter."""
         needle = self.filter_var.get().strip().lower()
-        names = sorted(set(self.offered) | self.chosen, key=str.lower)
+        names = sorted(set(self.offered) | set(self.services), key=str.lower)
         self.visible = [name for name in names if needle in name.lower()]
+        top = self.models_list.yview()[0]
         self.models_list.delete(0, "end")
         for index, name in enumerate(self.visible):
-            self.models_list.insert("end", f"  {name}" + ("  (free)" if name in self.free else ""))
-            if name in self.chosen:
+            note = f"   [{', '.join(self.services[name])}]" if name in self.services else ""
+            self.models_list.insert("end", f"  {name}" + ("  (free)" if name in self.free else "") + note)
+            if name in self.services:
                 self.models_list.selection_set(index)
+        self.models_list.yview_moveto(top)
         self.update_models_note()
 
     def on_models_clicked(self, _event=None):
-        picked = set(self.models_list.curselection())
-        for index, name in enumerate(self.visible):
-            if index in picked:
-                self.chosen.add(name)
-            else:
-                self.chosen.discard(name)
-        self.update_models_note()
+        picked = {self.visible[i] for i in self.models_list.curselection()}
+        allowed = self.allowed_services()
+        for name in self.visible:
+            if name in picked and name not in self.services:
+                self.services[name] = guess_services(name, allowed)
+                self.current = name
+            elif name not in picked and name in self.services:
+                del self.services[name]
+                if self.current == name:
+                    self.current = None
+        self.show_models()
+        self.show_editor()
+
+    def on_models_right_click(self, event):
+        """Right-click a ticked model to edit its services without un-ticking it."""
+        index = self.models_list.nearest(event.y)
+        if 0 <= index < len(self.visible) and self.visible[index] in self.services:
+            self.current = self.visible[index]
+            self.show_editor()
+        return "break"
+
+    def show_editor(self):
+        allowed = self.allowed_services()
+        for name, box in self.service_boxes.items():
+            self.service_vars[name].set(bool(self.current) and name in self.services.get(self.current, ()))
+            box.state(["!disabled"] if self.current and name in allowed else ["disabled"])
+        if self.current:
+            self.editor_note_var.set(f"Services for {self.current} (right-click another ticked model to edit it):")
+        else:
+            self.editor_note_var.set("Tick a model to set what it is for.")
+
+    def on_service_toggled(self):
+        if not self.current or self.current not in self.services:
+            return
+        wanted = {name for name, var in self.service_vars.items() if var.get()}
+        if "vision" in wanted and "chat" not in self.services[self.current]:
+            wanted.add("chat")  # a model that sees is a chat model
+        if "chat" not in wanted:
+            wanted.discard("vision")
+        self.services[self.current] = normalize_services(wanted)
+        self.show_models()
+        self.show_editor()
 
     def clear_models(self):
-        self.chosen.clear()
+        self.services.clear()
+        self.current = None
         self.show_models()
+        self.show_editor()
 
     def update_models_note(self):
         offered = f" of {len(self.offered)}" if self.offered else ""
-        self.models_note_var.set(f"{len(self.chosen)}{offered} ticked" if self.chosen
-                                 else ("All models" + (f" ({len(self.offered)})" if self.offered else "")))
+        if self.services:
+            self.models_note_var.set(f"{len(self.services)}{offered} ticked")
+        elif "chat" in self.allowed_services():
+            self.models_note_var.set("All models, as chat" + (f" ({len(self.offered)})" if self.offered else ""))
+        else:
+            self.models_note_var.set("Nothing ticked: no models are registered")
+
+    def show_catalog(self):
+        """What the selected provider is good for, its services and where to get a key."""
+        for child in self.catalog.winfo_children():
+            child.destroy()
+        preset = preset_for(self.preset_id())
+        if not preset:
+            ttk.Label(self.catalog, style="Muted.TLabel", wraplength=560,
+                      text="Any other OpenAI-compatible endpoint. All services can be set per model.").pack(anchor="w")
+            return
+        ttk.Label(self.catalog, text=preset.description, style="Muted.TLabel", wraplength=560).pack(anchor="w")
+        tags = ttk.Frame(self.catalog)
+        tags.pack(anchor="w", pady=(4, 0))
+        for service in preset.services:
+            ttk.Label(tags, text=SERVICE_TAGS[service], style="Tag.TLabel").pack(side="left", padx=(0, 6))
+        links = ttk.Frame(self.catalog)
+        links.pack(anchor="w", pady=(4, 0))
+        link(links, "Get an API key", preset.key_url).pack(side="left")
+        if preset.pricing_url:
+            link(links, "Pricing", preset.pricing_url).pack(side="left", padx=(16, 0))
 
     def preset_id(self) -> str:
         label = self.preset_var.get()
@@ -242,10 +344,15 @@ class ProviderForm(ttk.Frame):
         if not preset and not initial:
             self.url_var.set("")
         self.url_entry.configure(state="normal")
+        self.show_catalog()
+        if not initial:
+            self.show_editor()
+            self.update_models_note()
 
     def build(self) -> Provider:
         provider_id = self.existing.id if self.existing else unique_id(self.name_var.get(), self.taken_ids)
-        models = sorted(self.chosen, key=str.lower)
+        models = [{"id": name, "services": normalize_services(self.services[name])}
+                  for name in sorted(self.services, key=str.lower)]
         return validate_provider(Provider(
             id=provider_id,
             name=self.name_var.get(),
@@ -417,6 +524,13 @@ class SettingsWindow:
             ttk.Label(empty, text=step, style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
         ttk.Button(empty, text="+  Add provider", style="Accent.TButton", command=self.add).pack(
             anchor="w", pady=(18, 0))
+        ttk.Label(empty, text="PROVIDERS YOU CAN CONNECT", style="Section.TLabel").pack(anchor="w", pady=(22, 4))
+        for preset in PRESETS:
+            row = ttk.Frame(empty)
+            row.pack(fill="x", pady=2)
+            ttk.Label(row, text=preset.name, width=16).pack(side="left")
+            ttk.Label(row, text=tags_text(preset.services), style="Muted.TLabel", width=34).pack(side="left")
+            ttk.Label(row, text=preset.description, style="Muted.TLabel").pack(side="left")
 
     def open_form(self, existing):
         self.clear_content()

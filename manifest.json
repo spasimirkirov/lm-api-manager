@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "plugin_name": "LM API Manager",
   "plugin_type": "llm_plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "executable": "LmApiManager.exe",
   "transport": {
     "kind": "http",
@@ -10,7 +10,7 @@
   },
   "capabilities": {
     "persistent_worker": true,
-    "services": ["chat"]
+    "services": ["chat", "vision", "tts", "images"]
   },
   "commands": {
     "serve": "--serve --parent-pid {parent_pid}",

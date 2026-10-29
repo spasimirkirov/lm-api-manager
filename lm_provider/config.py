@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .presets import preset_for
+from .presets import preset_for, preset_services
 
 KEYRING_SERVICE = "PalEngine.LmApiManager"
 LEGACY_KEYRING_SERVICE = "PalEngine.LmOpenAiProvider"
@@ -28,6 +28,35 @@ FILE_VERSION = 1
 # A provider id is the model prefix ("<id>/<model>"): no slash, short, lowercase.
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+SERVICES = ("chat", "vision", "tts", "images")
+
+
+def normalize_services(raw) -> list:
+    """Valid, ordered services; vision always comes with chat; nothing left means chat."""
+    wanted = {s for s in (raw if isinstance(raw, (list, tuple, set)) else []) if s in SERVICES}
+    if "vision" in wanted:
+        wanted.add("chat")
+    return [s for s in SERVICES if s in wanted] or ["chat"]
+
+
+def normalize_models(raw) -> list:
+    """The registered models as [{"id", "services"}]. The old format was a plain list of ids:
+    those become chat models."""
+    models, seen = [], set()
+    for item in raw if isinstance(raw, (list, tuple)) else []:
+        if isinstance(item, str):
+            model_id, services = item, ["chat"]
+        elif isinstance(item, dict) and isinstance(item.get("id"), str):
+            model_id, services = item["id"], normalize_services(item.get("services"))
+        else:
+            continue
+        model_id = model_id.strip()
+        if model_id and model_id not in seen:
+            seen.add(model_id)
+            models.append({"id": model_id, "services": services})
+    return models
 
 
 class ConfigError(ValueError):
@@ -73,8 +102,26 @@ class Provider:
     base_url: str
     type: str = "llm"
     preset: str = "custom"
-    # Optional allow-list: when set, only these models are listed and accepted.
+    # Registered models [{"id", "services"}]. Empty: a provider with chat lists all its models
+    # as chat; images and speech always need an explicit registration.
     models: list = field(default_factory=list)
+
+    def model_services(self, model_id: str):
+        """Services of a registered model, or None if it is not registered."""
+        for entry in self.models:
+            if entry["id"] == model_id:
+                return entry["services"]
+        return None
+
+    @property
+    def implicit_chat(self) -> bool:
+        """No ticks means "all models, chat only" - for providers that do chat."""
+        return "chat" in preset_services(self.preset)
+
+    @property
+    def adapter(self) -> str:
+        preset = preset_for(self.preset)
+        return preset.adapter if preset else ""
 
     @property
     def extra_headers(self) -> dict:
@@ -125,7 +172,7 @@ def validate_provider(provider: Provider) -> Provider:
     if provider.type not in PROVIDER_TYPES:
         raise ConfigError(f"Unsupported provider type: {provider.type}")
     provider.base_url = normalize_base_url(provider.base_url)
-    provider.models = [m.strip() for m in provider.models if isinstance(m, str) and m.strip()]
+    provider.models = normalize_models(provider.models)
     return provider
 
 

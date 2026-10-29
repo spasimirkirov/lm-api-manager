@@ -133,6 +133,10 @@ async def list_models(session: aiohttp.ClientSession, provider, key: str) -> lis
     """Models the provider offers (ids without the prefix): [{"id", "free"}], sorted."""
     if not key:
         raise UpstreamError(401, f"{provider.name} has no API key yet.", "missing_api_key", "authentication_error")
+    if provider.adapter == "elevenlabs":
+        from . import elevenlabs  # imported here: elevenlabs.py uses this module
+
+        return await elevenlabs.list_models(session, provider, key)
     try:
         async with session.get(
             upstream_url(provider, "models"),
@@ -161,14 +165,18 @@ async def list_models(session: aiohttp.ClientSession, provider, key: str) -> lis
 
 
 async def provider_models(session: aiohttp.ClientSession, provider, key: str) -> list:
-    """The models Pal Engine may use: the provider's list, cut to the allow-list when one is
-    set. If the provider cannot be asked, the allow-list alone still works."""
+    """The models Pal Engine may use: [{"id", "free", "services"}]. Registered models are
+    exactly the ticked ones (the provider's list only adds the "free" mark, and when the
+    provider cannot be asked the registration alone still works). Nothing registered: all of
+    the provider's models as chat, for providers that do chat; nothing for the others."""
     if not provider.models:
-        return await list_models(session, provider, key)
-    allowed = set(provider.models)
+        if not provider.implicit_chat:
+            return []
+        return [{**m, "services": ["chat"]} for m in await list_models(session, provider, key)]
     try:
         offered = {m["id"]: m for m in await list_models(session, provider, key)}
     except UpstreamError:
         offered = {}
-    return [offered.get(model_id) or {"id": model_id, "free": model_id.endswith(":free")}
-            for model_id in sorted(allowed)]
+    return [{"id": entry["id"], "services": list(entry["services"]),
+             "free": bool(offered.get(entry["id"], {}).get("free")) or entry["id"].endswith(":free")}
+            for entry in sorted(provider.models, key=lambda e: e["id"])]
