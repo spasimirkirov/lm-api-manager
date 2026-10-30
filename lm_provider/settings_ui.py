@@ -18,13 +18,12 @@ from .config import (
     Provider,
     key_hint,
     load_providers,
-    normalize_services,
     save_providers,
     unique_id,
     validate_provider,
 )
 from .presets import CUSTOM_PRESET_ID, PRESETS, preset_for, preset_services
-from .services import guess_services
+from .ticks import cell_glyph, count_text, toggle_model, toggle_service, visible_models
 from .upstream import UpstreamError, list_models, new_session
 
 APP_NAME = "LM API Manager"
@@ -37,6 +36,7 @@ DIVIDER = "#30363d"
 SELECTED = "#0e4a57"
 OK = "#3fb950"
 SERVICE_LABELS = {"chat": "Chat", "vision": "Vision", "tts": "Voice (TTS)", "images": "Pictures"}
+SERVICE_ORDER = tuple(SERVICE_LABELS)
 SERVICE_TAGS = {"chat": "chat", "vision": "vision", "tts": "voice", "images": "pictures"}
 CUSTOM_LABEL = "Custom"
 
@@ -139,8 +139,10 @@ class ProviderForm(ttk.Frame):
         # Ticked models with their services, every model the provider offered when tested,
         # and the ones it reports as free.
         self.services = {m["id"]: list(m["services"]) for m in existing.models} if existing else {}
-        self.current = None  # the model whose services the checkboxes edit
-        self.service_vars = {name: tk.BooleanVar() for name in SERVICE_LABELS}
+        # A provider saved before 0.3.1 with no ticks: its models get ticked for chat on first test.
+        self.pending_legacy = bool(existing and existing.legacy_all_chat)
+        self.ticked_only_var = tk.BooleanVar(value=False)
+        self.ticked_only_var.trace_add("write", lambda *_: self.show_models())
         self.offered = []
         self.free = set()
         self.visible = []
@@ -175,39 +177,33 @@ class ProviderForm(ttk.Frame):
 
         ttk.Label(right, text="Models").pack(anchor="w", pady=(0, 2))
         ttk.Label(right, style="Muted.TLabel", wraplength=560,
-                  text="Test connection loads the list. Click a model to tick it for Pal Engine and set what it "
-                       "is for below. Chat providers: none ticked means all models, as chat. Pictures and voices "
-                       "always need a tick. (free) is shown when the provider reports a zero price."
+                  text="Test connection loads the list. Tick what each model is for; a model with at least one "
+                       "tick is given to Pal Engine, the rest are not. Click a model name to tick its likely "
+                       "use. (free) means the provider reports a zero price."
                   ).pack(anchor="w", pady=(0, 6))
         filter_row = ttk.Frame(right)
         filter_row.pack(fill="x", pady=(0, 4))
         ttk.Label(filter_row, text="Filter", style="Muted.TLabel").pack(side="left", padx=(0, 6))
         ttk.Entry(filter_row, textvariable=self.filter_var).pack(side="left", fill="x", expand=True)
+        ttk.Checkbutton(filter_row, text="Show ticked only", variable=self.ticked_only_var).pack(
+            side="left", padx=(8, 0))
         ttk.Button(filter_row, text="Clear ticks", command=self.clear_models).pack(side="left", padx=(6, 0))
         list_box = ttk.Frame(right)
         list_box.pack(fill="both", expand=True)
-        self.models_list = tk.Listbox(list_box, selectmode="multiple", exportselection=False, activestyle="none",
-                                      bg=PANEL, fg=FG, selectbackground="#0e4a57", selectforeground=ACCENT,
-                                      highlightthickness=1, highlightbackground=DIVIDER, highlightcolor=ACCENT,
-                                      relief="flat", borderwidth=0, font=("Segoe UI", 10))
-        scrollbar = ttk.Scrollbar(list_box, orient="vertical", command=self.models_list.yview)
-        self.models_list.configure(yscrollcommand=scrollbar.set)
-        self.models_list.pack(side="left", fill="both", expand=True)
+        columns = ("model", *SERVICE_ORDER, "price")
+        self.table = ttk.Treeview(list_box, columns=columns, show="headings", selectmode="none")
+        self.table.heading("model", text="Model", anchor="w")
+        self.table.column("model", width=200, minwidth=120, stretch=True, anchor="w")
+        for name in SERVICE_ORDER:
+            self.table.heading(name, text=SERVICE_LABELS[name])
+            self.table.column(name, width=78, minwidth=64, stretch=False, anchor="center")
+        self.table.heading("price", text="Price", anchor="w")
+        self.table.column("price", width=60, minwidth=50, stretch=False, anchor="w")
+        scrollbar = ttk.Scrollbar(list_box, orient="vertical", command=self.table.yview)
+        self.table.configure(yscrollcommand=scrollbar.set)
+        self.table.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="left", fill="y")
-        self.models_list.bind("<<ListboxSelect>>", self.on_models_clicked)
-        self.models_list.bind("<Button-3>", self.on_models_right_click)
-        editor = ttk.Frame(right)
-        editor.pack(fill="x", pady=(8, 0))
-        self.editor_note_var = tk.StringVar()
-        ttk.Label(editor, textvariable=self.editor_note_var, style="Muted.TLabel", wraplength=560).pack(anchor="w")
-        self.service_boxes = {}
-        boxes = ttk.Frame(editor)
-        boxes.pack(anchor="w", pady=(4, 0))
-        for name, label in SERVICE_LABELS.items():
-            box = ttk.Checkbutton(boxes, text=label, variable=self.service_vars[name],
-                                  command=self.on_service_toggled)
-            box.pack(side="left", padx=(0, 14))
-            self.service_boxes[name] = box
+        self.table.bind("<Button-1>", self.on_table_click)
         ttk.Label(right, textvariable=self.models_note_var, style="Muted.TLabel").pack(anchor="w", pady=(4, 0))
 
         ttk.Separator(self).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 10))
@@ -229,86 +225,62 @@ class ProviderForm(ttk.Frame):
         self.rowconfigure(2, weight=1)
         self.on_preset(initial=True)
         self.show_models()
-        self.show_editor()
         if existing and self.saved_key:
             self.test(quiet=True)
 
     def allowed_services(self) -> tuple:
         return preset_services(self.preset_id())
 
+    def row_values(self, name: str) -> tuple:
+        allowed = self.allowed_services()
+        return (name, *(cell_glyph(self.services, name, svc, allowed) for svc in SERVICE_ORDER),
+                "(free)" if name in self.free else "")
+
     def show_models(self):
-        """Fills the list from the offered models plus the ticked ones, through the filter."""
-        needle = self.filter_var.get().strip().lower()
-        names = sorted(set(self.offered) | set(self.services), key=str.lower)
-        self.visible = [name for name in names if needle in name.lower()]
-        top = self.models_list.yview()[0]
-        self.models_list.delete(0, "end")
-        for index, name in enumerate(self.visible):
-            note = f"   [{', '.join(self.services[name])}]" if name in self.services else ""
-            self.models_list.insert("end", f"  {name}" + ("  (free)" if name in self.free else "") + note)
-            if name in self.services:
-                self.models_list.selection_set(index)
-        self.models_list.yview_moveto(top)
+        """Fills the table from the offered models plus the ticked ones, through the filter."""
+        self.visible = visible_models(self.offered, self.services, self.filter_var.get(),
+                                      self.ticked_only_var.get())
+        top = self.table.yview()[0]
+        self.table.delete(*self.table.get_children())
+        for name in self.visible:
+            self.table.insert("", "end", iid=name, values=self.row_values(name))
+        self.table.yview_moveto(top)
         self.update_models_note()
 
-    def on_models_clicked(self, _event=None):
-        picked = {self.visible[i] for i in self.models_list.curselection()}
-        allowed = self.allowed_services()
-        for name in self.visible:
-            if name in picked and name not in self.services:
-                self.services[name] = guess_services(name, allowed)
-                self.current = name
-            elif name not in picked and name in self.services:
-                del self.services[name]
-                if self.current == name:
-                    self.current = None
-        self.show_models()
-        self.show_editor()
-
-    def on_models_right_click(self, event):
-        """Right-click a ticked model to edit its services without un-ticking it."""
-        index = self.models_list.nearest(event.y)
-        if 0 <= index < len(self.visible) and self.visible[index] in self.services:
-            self.current = self.visible[index]
-            self.show_editor()
-        return "break"
-
-    def show_editor(self):
-        allowed = self.allowed_services()
-        for name, box in self.service_boxes.items():
-            self.service_vars[name].set(bool(self.current) and name in self.services.get(self.current, ()))
-            box.state(["!disabled"] if self.current and name in allowed else ["disabled"])
-        if self.current:
-            self.editor_note_var.set(f"Services for {self.current} (right-click another ticked model to edit it):")
-        else:
-            self.editor_note_var.set("Tick a model to set what it is for.")
-
-    def on_service_toggled(self):
-        if not self.current or self.current not in self.services:
+    def refresh_row(self, name: str):
+        """One toggle redraws one row (the whole table only when "ticked only" is on)."""
+        if self.ticked_only_var.get():
+            self.show_models()
             return
-        wanted = {name for name, var in self.service_vars.items() if var.get()}
-        if "vision" in wanted and "chat" not in self.services[self.current]:
-            wanted.add("chat")  # a model that sees is a chat model
-        if "chat" not in wanted:
-            wanted.discard("vision")
-        self.services[self.current] = normalize_services(wanted)
-        self.show_models()
-        self.show_editor()
+        if self.table.exists(name):
+            self.table.item(name, values=self.row_values(name))
+        self.update_models_note()
+
+    def on_table_click(self, event):
+        if self.table.identify_region(event.x, event.y) != "cell":
+            return None
+        name = self.table.identify_row(event.y)
+        if not name:
+            return None
+        column = int(self.table.identify_column(event.x).lstrip("#") or 0)
+        allowed = self.allowed_services()
+        if column == 1:
+            toggle_model(self.services, name, allowed)
+        elif 2 <= column <= 1 + len(SERVICE_ORDER):
+            toggle_service(self.services, name, SERVICE_ORDER[column - 2], allowed)
+        else:
+            return "break"
+        self.pending_legacy = False
+        self.refresh_row(name)
+        return "break"
 
     def clear_models(self):
         self.services.clear()
-        self.current = None
+        self.pending_legacy = False
         self.show_models()
-        self.show_editor()
 
     def update_models_note(self):
-        offered = f" of {len(self.offered)}" if self.offered else ""
-        if self.services:
-            self.models_note_var.set(f"{len(self.services)}{offered} ticked")
-        elif "chat" in self.allowed_services():
-            self.models_note_var.set("All models, as chat" + (f" ({len(self.offered)})" if self.offered else ""))
-        else:
-            self.models_note_var.set("Nothing ticked: no models are registered")
+        self.models_note_var.set(count_text(self.services, len(self.offered)))
 
     def show_catalog(self):
         """What the selected provider is good for, its services and where to get a key."""
@@ -346,13 +318,12 @@ class ProviderForm(ttk.Frame):
         self.url_entry.configure(state="normal")
         self.show_catalog()
         if not initial:
-            self.show_editor()
-            self.update_models_note()
+            self.show_models()
 
     def build(self) -> Provider:
         provider_id = self.existing.id if self.existing else unique_id(self.name_var.get(), self.taken_ids)
-        models = [{"id": name, "services": normalize_services(self.services[name])}
-                  for name in sorted(self.services, key=str.lower)]
+        models = [{"id": name, "services": list(self.services[name])}
+                  for name in sorted(self.services, key=str.lower) if self.services[name]]
         return validate_provider(Provider(
             id=provider_id,
             name=self.name_var.get(),
@@ -360,6 +331,7 @@ class ProviderForm(ttk.Frame):
             type="llm",
             preset=self.preset_id(),
             models=models,
+            legacy_all_chat=self.pending_legacy and not models,
         ))
 
     def current_key(self) -> str:
@@ -387,6 +359,10 @@ class ProviderForm(ttk.Frame):
                 return
             self.offered = [entry["id"] for entry in entries]
             self.free = {entry["id"] for entry in entries if entry["free"]}
+            if self.pending_legacy and not self.services and self.offered:
+                # Saved before 0.3.1 with no ticks: all its models as chat, once. Save keeps it.
+                self.services = {name: ["chat"] for name in self.offered}
+                self.pending_legacy = False
             self.show_models()
             free = f", {len(self.free)} free" if self.free else ""
             self.status_var.set("" if quiet else f"Connected: {len(entries)} models{free}.")

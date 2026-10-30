@@ -167,10 +167,10 @@ async def list_models(session: aiohttp.ClientSession, provider, key: str) -> lis
 async def provider_models(session: aiohttp.ClientSession, provider, key: str) -> list:
     """The models Pal Engine may use: [{"id", "free", "services"}]. Registered models are
     exactly the ticked ones (the provider's list only adds the "free" mark, and when the
-    provider cannot be asked the registration alone still works). Nothing registered: all of
-    the provider's models as chat, for providers that do chat; nothing for the others."""
+    provider cannot be asked the registration alone still works). Nothing ticked: nothing is
+    given, except a provider saved before 0.3.1, whose models are all chat until migrated."""
     if not provider.models:
-        if not provider.implicit_chat:
+        if not provider.legacy_all_chat:
             return []
         return [{**m, "services": ["chat"]} for m in await list_models(session, provider, key)]
     try:

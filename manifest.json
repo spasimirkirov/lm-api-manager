@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "plugin_name": "LM API Manager",
   "plugin_type": "llm_plugin",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "executable": "LmApiManager.exe",
   "transport": {
     "kind": "http",

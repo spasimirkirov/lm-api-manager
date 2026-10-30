@@ -21,6 +21,7 @@ import aiohttp
 from aiohttp import web
 
 from . import __version__, elevenlabs
+from .config import migrate_legacy_ticks
 from .presets import preset_for
 from .upstream import (
     MAX_ERROR_BODY,
@@ -88,10 +89,10 @@ async def health(request: web.Request):
 
 def check_model(provider, upstream_model: str, service: str):
     """An error response unless this model is registered for `service`. Nothing registered
-    means "all models as chat" for providers that do chat; other services need a tick."""
+    means no models, except a provider saved before 0.3.1 that is not migrated yet."""
     services = provider.model_services(upstream_model)
     if services is None:
-        if not provider.models and service == "chat" and provider.implicit_chat:
+        if not provider.models and service == "chat" and provider.legacy_all_chat:
             return None
         return error_response(404, f'{provider.name} has no model "{upstream_model}" in its list.', "model_not_found")
     if service not in services:
@@ -307,6 +308,11 @@ async def models(request: web.Request):
             entries = await provider_models(session, provider, store.key(provider.id))
         except UpstreamError as error:
             return provider, [], error
+        if provider.legacy_all_chat and entries:
+            try:  # once: the old "no ticks = all as chat" becomes real ticks
+                migrate_legacy_ticks(store.path, provider.id, [e["id"] for e in entries])
+            except OSError:
+                log.warning("Could not save the migrated models of %s", provider.id)
         cache[provider.id] = (signature, time.monotonic(), entries)
         return provider, entries, None
 

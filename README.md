@@ -72,15 +72,20 @@ Models appear in Pal Engine as `<provider id>/<model>`, e.g. `deepseek/deepseek-
 
 ### Registering models
 
-In the settings, **Test connection** loads the provider's models. Click a model to tick it: its
-services are pre-filled from the name (`flux`, `sdxl`, `stable-diffusion` = pictures; `tts`,
+In the settings, **Test connection** loads the provider's models into one table: a row per
+model, with the columns **Model | Chat | Vision | Voice (TTS) | Pictures | Price**. Click a
+checkbox to tick that service for the model; vision always comes with chat. Clicking the model
+name ticks the services guessed from it (`flux`, `sdxl`, `stable-diffusion` = pictures; `tts`,
 `kokoro`, `eleven` = voice; `-vl`, `vision`, `gpt-4o`, `gemini` = chat + vision; anything else =
-chat) and you can change them with the **Chat / Vision / Voice (TTS) / Pictures** boxes under the
-list. Right-click a ticked model to edit it without un-ticking. Vision always comes with chat.
+chat) and clicks again to untick it. Nothing is ticked on its own. **Filter**, **Show ticked
+only** and **Clear ticks** work on the table, and the count under it reads "N of M ticked".
 
-- Only ticked models are registered. For a provider that does chat, **none ticked still means all
-  its models, as chat** (as before). Pictures and voices always need an explicit tick, and a
-  provider without chat (ElevenLabs) with nothing ticked registers nothing.
+- A model counts as ticked when at least one service is checked, and **only ticked models are
+  given to Pal Engine** (`/v1/models` and routing). Nothing ticked means no models. (Before 0.3.1
+  a chat provider with nothing ticked gave all its models; that rule is gone.)
+- Update from 0.3.0 or older: a saved provider with no ticks keeps working. The first time the
+  model list is requested (or Test connection is used in its window) all its known models are
+  ticked for chat once, and that is saved, so nothing breaks.
 - A model is marked **(free)** only when the provider itself reports it, with a `:free` id or a
   zero price in its model list (OpenRouter does).
 - An older `providers.json` with a plain list of model ids is read as chat models; it is rewritten
@@ -111,7 +116,7 @@ The provider list (no keys) is saved in `%APPDATA%\PalEngine\lm-api-manager\prov
 On start the server prints one line to stdout:
 
 ```json
-{"event": "ready", "port": 50123, "version": "0.3.0", "protocol": 1}
+{"event": "ready", "port": 50123, "version": "0.3.1", "protocol": 1}
 ```
 
 | Endpoint | Purpose |
@@ -160,7 +165,7 @@ venv\Scripts\python -m pytest -q
 ## Releases
 
 Bump `version` in `manifest.json` and in `lm_provider/__init__.py`, merge to `main`, then push a
-matching tag (`git tag v0.3.0 && git push origin v0.3.0`). The `Release` workflow runs the
+matching tag (`git tag v0.3.1 && git push origin v0.3.1`). The `Release` workflow runs the
 tests, builds the exe, smoke-tests it and publishes the release with the plugin zip. Pushes
 without a tag build nothing.
 

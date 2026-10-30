@@ -24,7 +24,7 @@ LEGACY_KEYRING_SERVICE = "PalEngine.LmOpenAiProvider"
 CONFIG_DIR_NAME = "lm-api-manager"
 LEGACY_CONFIG_DIR_NAME = "lm-open-ai-provider"
 PROVIDER_TYPES = ("llm",)
-FILE_VERSION = 1
+FILE_VERSION = 2
 # A provider id is the model prefix ("<id>/<model>"): no slash, short, lowercase.
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -102,9 +102,11 @@ class Provider:
     base_url: str
     type: str = "llm"
     preset: str = "custom"
-    # Registered models [{"id", "services"}]. Empty: a provider with chat lists all its models
-    # as chat; images and speech always need an explicit registration.
+    # Ticked models [{"id", "services"}]. Only these are given to Pal Engine.
     models: list = field(default_factory=list)
+    # Set only for a provider saved before 0.3.1 with no ticks (it meant "all models, as chat"):
+    # its known models are ticked for chat once (see migrate_legacy_ticks) and the flag drops.
+    legacy_all_chat: bool = False
 
     def model_services(self, model_id: str):
         """Services of a registered model, or None if it is not registered."""
@@ -112,11 +114,6 @@ class Provider:
             if entry["id"] == model_id:
                 return entry["services"]
         return None
-
-    @property
-    def implicit_chat(self) -> bool:
-        """No ticks means "all models, chat only" - for providers that do chat."""
-        return "chat" in preset_services(self.preset)
 
     @property
     def adapter(self) -> str:
@@ -182,6 +179,7 @@ def load_providers(path: Path = None) -> list:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return []
+    old_file = isinstance(data, dict) and (data.get("version") or 1) < 2
     providers, seen = [], set()
     for entry in data.get("providers", []) if isinstance(data, dict) else []:
         try:
@@ -193,6 +191,10 @@ def load_providers(path: Path = None) -> list:
                 preset=str(entry.get("preset", "custom")),
                 models=list(entry.get("models") or []),
             ))
+            # Before 0.3.1 "no ticks" meant all models as chat; keep that until it is migrated.
+            if not provider.models and "chat" in preset_services(provider.preset) and (
+                    entry.get("legacy_all_chat") or old_file):
+                provider.legacy_all_chat = True
         except (ConfigError, AttributeError, TypeError):
             continue
         if provider.id in seen:
@@ -200,6 +202,23 @@ def load_providers(path: Path = None) -> list:
         seen.add(provider.id)
         providers.append(provider)
     return providers
+
+
+def migrate_legacy_ticks(path: Path, provider_id: str, model_ids) -> bool:
+    """Once, for a provider that had no ticks before 0.3.1: tick all its known models for chat
+    and save. Re-reads the file so a newer save from the settings window is never overwritten.
+    True when the file changed. With no known models the flag stays for the next try."""
+    model_ids = [m for m in model_ids if isinstance(m, str) and m]
+    if not model_ids:
+        return False
+    providers = load_providers(path)
+    for provider in providers:
+        if provider.id == provider_id and provider.legacy_all_chat and not provider.models:
+            provider.models = normalize_models(model_ids)
+            provider.legacy_all_chat = False
+            save_providers(providers, path)
+            return True
+    return False
 
 
 def save_providers(providers, path: Path = None) -> None:
@@ -285,6 +304,10 @@ class ProviderStore:
         self._mtime = None
         self._providers = {}
         self._keys = {}
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     def _current_mtime(self):
         try:

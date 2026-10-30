@@ -157,12 +157,11 @@ def test_models_list_has_services_and_provider_name(tmp_path):
     with_gateway(tmp_path, scenario)
 
 
-def test_nothing_ticked_means_all_chat_only_for_chat_providers(tmp_path):
+def test_nothing_ticked_means_no_models(tmp_path):
     async def scenario(client, mock):
         data = (await (await client.get("/v1/models", headers=AUTH)).json())["data"]
-        assert {m["id"]: m["services"] for m in data} == {
-            "di/chat-1": ["chat"], "di/flux-1": ["chat"], "di/tts-1": ["chat"]}
-        r = await client.post("/v1/images/generations", headers=AUTH, json={"model": "di/flux-1", "prompt": "cat"})
+        assert data == []
+        r = await client.post("/v1/chat/completions", headers=AUTH, json={"model": "di/chat-1", "messages": []})
         assert r.status == 404
     with_gateway(tmp_path, scenario, providers=lambda mock: [
         Provider(id="di", name="DI", base_url=mock.url("/v1"), preset="deepinfra"),

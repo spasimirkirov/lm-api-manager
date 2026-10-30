@@ -61,11 +61,14 @@ class Upstream:
         return response
 
 
+ALL_MODELS = ["model-a", "vendor/model-b"]  # only ticked models are given to Pal Engine
+
+
 async def gateway(tmp_path, upstream, models=None, keys=None):
     path = tmp_path / "providers.json"
     providers = [
-        Provider(id="mock", name="Mock AI", base_url=upstream.base_url, models=models or []),
-        Provider(id="other", name="Other AI", base_url=upstream.base_url),
+        Provider(id="mock", name="Mock AI", base_url=upstream.base_url, models=models or ALL_MODELS),
+        Provider(id="other", name="Other AI", base_url=upstream.base_url, models=ALL_MODELS),
     ]
     save_providers(providers, path)
     vault = MemoryVault(keys if keys is not None else {"mock": SECRET, "other": OTHER_SECRET})
@@ -267,7 +270,7 @@ def test_unreachable_provider(tmp_path):
         base_url = upstream.base_url
         await upstream.server.close()  # nothing listens there any more
         path = tmp_path / "providers.json"
-        save_providers([Provider(id="gone", name="Gone AI", base_url=base_url)], path)
+        save_providers([Provider(id="gone", name="Gone AI", base_url=base_url, models=["x"])], path)
         store = ProviderStore(MemoryVault({"gone": SECRET}), path)
         client = TestClient(TestServer(create_app(store, TOKEN), host="127.0.0.1"))
         await client.start_server()

@@ -4,4 +4,4 @@ Pal Engine talks to it over 127.0.0.1; the keys never leave this process except 
 upstream request to the provider the user chose.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
